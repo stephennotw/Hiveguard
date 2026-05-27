@@ -1,0 +1,29 @@
+{
+  "name": "hiveguard",
+  "version": "1.0.0",
+  "description": "Cross-platform endpoint supply chain scanner with live threat intelligence",
+  "main": "bin/hiveguard.js",
+  "bin": {
+    "hiveguard": "./bin/hiveguard.js"
+  },
+  "scripts": {
+    "scan": "node bin/hiveguard.js"
+  },
+  "keywords": [
+    "supply-chain",
+    "security",
+    "scanner",
+    "threat-intel",
+    "sbom",
+    "npm",
+    "pypi",
+    "vulnerability"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
