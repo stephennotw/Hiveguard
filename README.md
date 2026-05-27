@@ -21,7 +21,7 @@ HiveGuard inventories every software component on a developer endpoint — npm, 
 
 ```bash
 # Clone the repo (or copy the folder to the target machine)
-git clone https://github.com/your-org/hiveguard.git
+git clone https://github.com/stephennotw/hiveguard.git
 cd hiveguard
 
 # No install step needed — zero dependencies
