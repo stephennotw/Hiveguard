@@ -21,43 +21,55 @@ HiveGuard inventories every software component on a developer endpoint — npm, 
 
 ```bash
 # Clone the repo (or copy the folder to the target machine)
-git clone https://github.com/stephennotw/hiveguard.git
+git clone https://github.com/stephennotw/Hiveguard.git
 cd hiveguard
-
-# No install step needed — zero dependencies
-# Just requires Node.js 18+
-node --version   # verify >=18
 ```
+
+That's it — no `npm install`, no dependencies. The bootstrap wrappers handle everything, including downloading Node.js if needed.
 
 ## How to Run
 
+HiveGuard ships with bootstrap wrappers that **automatically download a portable Node.js** if one isn't already installed. No admin/root required.
+
+### Windows
+
+```powershell
+.\run.ps1
+.\run.ps1 --offline --output C:\results --verbose
+.\run.ps1 --json > results.json
+```
+
+### macOS / Linux
+
 ```bash
-# Basic scan — results go to ./hiveguard-results/
+chmod +x run.sh    # first time only
+./run.sh
+./run.sh --offline --output /tmp/results --verbose
+./run.sh --json > results.json
+```
+
+### Direct (if Node.js 18+ is already installed)
+
+```bash
 node bin/hiveguard.js
-
-# Custom output directory
-node bin/hiveguard.js --output /path/to/results
-
-# JSON to stdout (for automation / SIEM ingestion)
-node bin/hiveguard.js --json > results.json
-
-# Offline mode (uses bundled baseline catalogs, no network required)
-node bin/hiveguard.js --offline
-
-# Add custom threat intel from your security team
+node bin/hiveguard.js --output /path/to/results --verbose
+node bin/hiveguard.js --json --offline > results.json
 node bin/hiveguard.js --custom-intel /path/to/custom-catalogs
-
-# Scan specific directories only
 node bin/hiveguard.js --scan-dirs /home/user/projects,/opt/apps
-
-# Verbose logging for debugging
-node bin/hiveguard.js --verbose
-
-# Combine flags
-node bin/hiveguard.js --offline --custom-intel ./my-catalogs --output ./results --verbose
 ```
 
 After a scan completes, open the generated HTML report in any browser to explore results interactively.
+
+### How the Bootstrap Works
+
+The `run.ps1` (Windows) and `run.sh` (macOS/Linux) wrappers make HiveGuard truly zero-prerequisite:
+
+1. **Check system** — looks for an existing `node` binary with version >=18
+2. **Download if missing** — if Node.js isn't found (or is too old), downloads a portable Node.js binary from `nodejs.org` into a local `.node/` directory inside the repo. No system-level install, no admin/root, no PATH changes.
+3. **Cache for reuse** — the downloaded binary (~30MB) is kept in `.node/` so subsequent runs start instantly
+4. **Pass through** — all CLI flags are forwarded directly to `bin/hiveguard.js`
+
+The `.node/` directory is gitignored and never committed to the repo.
 
 ## CLI Options
 
@@ -84,18 +96,20 @@ After a scan completes, open the generated HTML report in any browser to explore
 
 ## Endpoint Deployment
 
-HiveGuard is designed to be pushed to endpoints via any management tool (Jamf, Tanium, Intune, Ansible, etc.):
+HiveGuard is designed to be pushed to endpoints via any management tool (Jamf, Tanium, Intune, Ansible, etc.).
+No prerequisites required — the bootstrap wrappers download Node.js automatically if needed.
 
-1. **Prerequisite** — Node.js 18+ must be available on the endpoint
-2. **Deploy** — Copy the entire `hiveguard/` directory to the endpoint
-3. **Run** — Execute: `node /path/to/hiveguard/bin/hiveguard.js --json --output /path/to/results > results.json`
-4. **Collect** — Gather `results.json` from each endpoint
-5. **Alert** — Use the exit code for automated alerting:
+1. **Deploy** — Copy the entire `hiveguard/` directory to the endpoint
+2. **Run** — Execute the bootstrap wrapper:
+   - **Windows**: `powershell -File C:\path\to\hiveguard\run.ps1 --json --output C:\ProgramData\HiveGuard > results.json`
+   - **macOS/Linux**: `/path/to/hiveguard/run.sh --json --output /tmp/hiveguard > results.json`
+3. **Collect** — Gather `results.json` from each endpoint
+4. **Alert** — Use the exit code for automated alerting:
    - `0` = clean
    - `1` = findings present (review recommended)
    - `2` = **critical** — supply chain compromise detected (escalate immediately)
 
-No admin/root privileges required — the scanner is fully read-only.
+No admin/root privileges required. If the endpoint already has Node.js 18+, the wrapper uses it directly. Otherwise it downloads a portable binary on first run (~30MB, cached for subsequent scans).
 
 ## Output Structure
 
@@ -173,6 +187,8 @@ Current baseline includes: mini-shai-hulud, antv-mini-shai-hulud, trapdoor-crypt
 
 ```
 hiveguard/
+├── run.ps1                  # Bootstrap wrapper (Windows)
+├── run.sh                   # Bootstrap wrapper (macOS/Linux)
 ├── bin/hiveguard.js          # CLI entry point + orchestrator
 ├── src/
 │   ├── scanners/             # One module per ecosystem
@@ -190,9 +206,10 @@ hiveguard/
 
 ## Requirements
 
-- **Node.js 18+** (uses built-in `fs`, `https`, `path`, `os` only)
+- **None** — the bootstrap wrappers (`run.ps1` / `run.sh`) download Node.js automatically if not present
 - **No npm install needed** — zero external dependencies
 - **Read-only filesystem access** — scans user home, project dirs, extension dirs without writing or executing anything
+- If running directly via `node bin/hiveguard.js`, Node.js 18+ is required (uses built-in `fs`, `https`, `path`, `os` only)
 
 ## Security
 

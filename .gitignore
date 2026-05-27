@@ -3,6 +3,7 @@ hiveguard-results/
 
 # Node
 node_modules/
+.node/
 
 # OS
 .DS_Store
