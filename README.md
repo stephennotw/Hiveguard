@@ -31,13 +31,28 @@ That's it — no `npm install`, no dependencies. The bootstrap wrappers handle e
 
 HiveGuard ships with bootstrap wrappers that **automatically download a portable Node.js** if one isn't already installed. No admin/root required.
 
-### Windows
+### Windows — Command Prompt (CMD)
+
+Open `cmd.exe` and run:
+
+```cmd
+run.bat
+run.bat --offline --output C:\results --verbose
+run.bat --json > results.json
+```
+
+### Windows — PowerShell
+
+Open PowerShell and run:
 
 ```powershell
 .\run.ps1
 .\run.ps1 --offline --output C:\results --verbose
 .\run.ps1 --json > results.json
 ```
+
+> **Note**: If you see `execution of scripts is disabled`, either use `run.bat` instead or run:
+> `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Bypass`
 
 ### macOS / Linux
 
@@ -49,6 +64,8 @@ chmod +x run.sh    # first time only
 ```
 
 ### Direct (if Node.js 18+ is already installed)
+
+If you already have Node.js 18+ on the system, you can skip the bootstrap wrappers entirely:
 
 ```bash
 node bin/hiveguard.js
@@ -62,7 +79,7 @@ After a scan completes, open the generated HTML report in any browser to explore
 
 ### How the Bootstrap Works
 
-The `run.ps1` (Windows) and `run.sh` (macOS/Linux) wrappers make HiveGuard truly zero-prerequisite:
+The `run.bat` / `run.ps1` (Windows) and `run.sh` (macOS/Linux) wrappers make HiveGuard truly zero-prerequisite:
 
 1. **Check system** — looks for an existing `node` binary with version >=18
 2. **Download if missing** — if Node.js isn't found (or is too old), downloads a portable Node.js binary from `nodejs.org` into a local `.node/` directory inside the repo. No system-level install, no admin/root, no PATH changes.
@@ -70,6 +87,12 @@ The `run.ps1` (Windows) and `run.sh` (macOS/Linux) wrappers make HiveGuard truly
 4. **Pass through** — all CLI flags are forwarded directly to `bin/hiveguard.js`
 
 The `.node/` directory is gitignored and never committed to the repo.
+
+| Wrapper | Shell | When to use |
+|---|---|---|
+| `run.bat` | CMD (Command Prompt) | Default for Windows — works everywhere, no execution policy issues |
+| `run.ps1` | PowerShell | If you prefer PowerShell or are running from a PS terminal |
+| `run.sh` | Bash / Zsh | macOS and Linux |
 
 ## CLI Options
 
@@ -101,7 +124,8 @@ No prerequisites required — the bootstrap wrappers download Node.js automatica
 
 1. **Deploy** — Copy the entire `hiveguard/` directory to the endpoint
 2. **Run** — Execute the bootstrap wrapper:
-   - **Windows**: `powershell -File C:\path\to\hiveguard\run.ps1 --json --output C:\ProgramData\HiveGuard > results.json`
+   - **Windows (CMD)**: `cmd /c C:\path\to\hiveguard\run.bat --json --output C:\ProgramData\HiveGuard > results.json`
+   - **Windows (PowerShell)**: `powershell -ExecutionPolicy Bypass -File C:\path\to\hiveguard\run.ps1 --json --output C:\ProgramData\HiveGuard > results.json`
    - **macOS/Linux**: `/path/to/hiveguard/run.sh --json --output /tmp/hiveguard > results.json`
 3. **Collect** — Gather `results.json` from each endpoint
 4. **Alert** — Use the exit code for automated alerting:
@@ -187,7 +211,8 @@ Current baseline includes: mini-shai-hulud, antv-mini-shai-hulud, trapdoor-crypt
 
 ```
 hiveguard/
-├── run.ps1                  # Bootstrap wrapper (Windows)
+├── run.bat                  # Bootstrap wrapper (Windows CMD)
+├── run.ps1                  # Bootstrap wrapper (Windows PowerShell)
 ├── run.sh                   # Bootstrap wrapper (macOS/Linux)
 ├── bin/hiveguard.js          # CLI entry point + orchestrator
 ├── src/
@@ -206,7 +231,7 @@ hiveguard/
 
 ## Requirements
 
-- **None** — the bootstrap wrappers (`run.ps1` / `run.sh`) download Node.js automatically if not present
+- **None** — the bootstrap wrappers (`run.bat` / `run.ps1` / `run.sh`) download Node.js automatically if not present
 - **No npm install needed** — zero external dependencies
 - **Read-only filesystem access** — scans user home, project dirs, extension dirs without writing or executing anything
 - If running directly via `node bin/hiveguard.js`, Node.js 18+ is required (uses built-in `fs`, `https`, `path`, `os` only)
