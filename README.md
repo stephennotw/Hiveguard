@@ -124,23 +124,25 @@ No prerequisites required — the bootstrap wrappers download Node.js automatica
 
 ### Option A: ZIP Package (recommended for Tanium / remote deployment)
 
-1. **Prepare** — Zip the entire `hiveguard/` folder into `hiveguard.zip`
-2. **Upload** — Upload `hiveguard.zip` as the package file
+1. **Prepare** — Zip the folder containing HiveGuard (e.g. `Hiveguard/`) into `Hiveguard.zip`
+2. **Upload** — Upload `Hiveguard.zip` as the package file
 3. **Command** — The package command extracts the ZIP, then runs the bootstrap:
-   - **Windows**: `cmd /c powershell -NoProfile -Command "Expand-Archive -Path 'hiveguard.zip' -DestinationPath '.' -Force" && hiveguard\hiveguard\run.bat --json --output C:\ProgramData\HiveGuard`
-   - **macOS/Linux**: `unzip -qo hiveguard.zip && hiveguard/hiveguard/run.sh --json --output /tmp/hiveguard`
+   - **Windows (CMD)**: `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && Hiveguard\run.bat --json`
+   - **Windows (PowerShell)**: `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && powershell Hiveguard\run.ps1 --json`
+   - **macOS/Linux**: `unzip -qo Hiveguard.zip && Hiveguard/run.sh --json`
 
 > **Important:**
-> - The `--output` directory is auto-created by the bootstrap wrappers — no need to pre-create it.
-> - **Do not** add `> results.json` to the command. The `--output` flag already writes all results (JSON + HTML) to the specified directory. Adding a shell redirect can cause "path not found" errors.
+> - The folder name inside the ZIP determines the path after `&&`. If your folder is named `Hiveguard`, the path is `Hiveguard\run.bat`.
+> - Results are written to `./hiveguard-results/` in the current directory by default. Use `--output <dir>` to change.
+> - **Do not** add `> results.json` to the command. The `--output` flag already writes all results (JSON + HTML) to the specified directory.
 
 ### Option B: Direct Copy
 
 1. **Deploy** — Copy the entire `hiveguard/` directory to the endpoint
 2. **Run** — Execute the bootstrap wrapper:
-   - **Windows (CMD)**: `cmd /c C:\path\to\hiveguard\run.bat --json --output C:\ProgramData\HiveGuard`
-   - **Windows (PowerShell)**: `powershell -ExecutionPolicy Bypass -File C:\path\to\hiveguard\run.ps1 --json --output C:\ProgramData\HiveGuard`
-   - **macOS/Linux**: `/path/to/hiveguard/run.sh --json --output /tmp/hiveguard`
+   - **Windows (CMD)**: `cmd /c C:\path\to\hiveguard\run.bat --json`
+   - **Windows (PowerShell)**: `powershell -ExecutionPolicy Bypass -File C:\path\to\hiveguard\run.ps1 --json`
+   - **macOS/Linux**: `/path/to/hiveguard/run.sh --json`
 
 ### Collecting Results
 
@@ -154,14 +156,14 @@ No prerequisites required — the bootstrap wrappers download Node.js automatica
 
 | Step | Where | What |
 |---|---|---|
-| Create package | Administration → Content → Packages → New Package | Upload `hiveguard.zip` |
-| Set command | Package → Command field | `cmd /c powershell -NoProfile -Command "Expand-Archive -Path 'hiveguard.zip' -DestinationPath '.' -Force" && hiveguard\hiveguard\run.bat --json --output C:\ProgramData\HiveGuard` |
+| Create package | Administration → Content → Packages → New Package | Upload `Hiveguard.zip` |
+| Set command | Package → Command field | `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && powershell Hiveguard\run.ps1 --json` |
 | Set timeout | Package → Command Timeout | `600` seconds (extraction + possible Node.js download) |
 | Target endpoints | Interact → Ask question | `Get Computer Name from all machines` |
 | Deploy | Select endpoints → Deploy Action → choose package | Run once or schedule |
-| Collect results | Create sensor to read `C:\ProgramData\HiveGuard\*.json` | Pull back via Interact |
+| Collect results | Create sensor to read `hiveguard-results\*.json` in the action directory | Pull back via Interact |
 
-No admin/root privileges required. If the endpoint already has Node.js 18+, the wrapper uses it directly. Otherwise it downloads a portable binary on first run (~30MB, cached for subsequent scans). The `--output` directory is auto-created by the bootstrap wrappers.
+No admin/root privileges required. Results are written to `./hiveguard-results/` in the current directory by default. If the endpoint already has Node.js 18+, the wrapper uses it directly. Otherwise it downloads a portable binary on first run (~30MB, cached for subsequent scans).
 
 ## Output Structure
 
