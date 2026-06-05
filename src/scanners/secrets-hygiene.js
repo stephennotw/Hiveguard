@@ -15,9 +15,9 @@ const SCANNER_ID = 'secrets-hygiene';
  * 
  * NOTE: This scanner NEVER reads secret values — only detects presence and metadata.
  */
-function scan(platform) {
+function scan(platform, opts = {}) {
   const results = {
-    envFiles: scanEnvFiles(platform),
+    envFiles: scanEnvFiles(platform, opts),
     gitCredentials: scanGitCredentials(platform),
     sshKeys: scanSshKeys(platform),
   };
@@ -34,19 +34,19 @@ function scan(platform) {
  * Find .env files and flag ones likely containing secrets.
  * NEVER reads or logs actual secret values.
  */
-function scanEnvFiles(platform) {
+function scanEnvFiles(platform, opts = {}) {
   const roots = platform.envSearchRoots || [];
   const foundPaths = [];
   const parsedFiles = [];
   const findings = [];
+  const envPattern = /^\.env(\.\w+)?$/;
 
   for (const root of roots) {
     if (!existsSafe(root)) continue;
     const found = walkSync(root, {
-      maxDepth: 4,
-      filter: (name) => name === '.env' || name === '.env.local' || name === '.env.production'
-        || name === '.env.development' || name.match(/^\.env\.\w+$/),
-      skipDirs: ['node_modules', '.git', 'vendor', '__pycache__', '.venv', 'venv'],
+      maxDepth: opts.maxDepth || 4,
+      filter: (name) => envPattern.test(name),
+      skipDirs: ['.venv', 'venv', 'vendor'],
     });
     foundPaths.push(...found);
   }

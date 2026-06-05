@@ -33,6 +33,7 @@ const SRC_ROOT = path.resolve(__dirname, '..', 'src');
 const logger = require(path.join(SRC_ROOT, 'utils', 'logger'));
 const { getPlatform, getSystemInfo } = require(path.join(SRC_ROOT, 'platform'));
 const output = require(path.join(SRC_ROOT, 'utils', 'output'));
+const { findMultipleFiles } = require(path.join(SRC_ROOT, 'utils', 'fs-safe'));
 
 // Scanners
 const npmScanner = require(path.join(SRC_ROOT, 'scanners', 'npm'));
@@ -67,7 +68,7 @@ function parseArgs() {
     customIntelDirs: [],
     noReport: false,
     noSecrets: false,
-    maxDepth: 6,
+    maxDepth: 4,
     verbose: false,
     help: false,
   };
@@ -124,7 +125,7 @@ function showHelp() {
     --custom-intel <dir> Dir(s) with custom threat intel JSON catalogs
     --no-report          Skip HTML report generation
     --no-secrets         Skip secrets hygiene scan
-    --max-depth <n>      Max directory depth (default: 6)
+    --max-depth <n>      Max directory depth (default: 4)
     --verbose, -v        Debug logging
     --help, -h           Show this message
 
@@ -192,25 +193,39 @@ async function main() {
   });
   const { catalogs, threatIndex, totalEntries, totalVersions } = buildIndex(intelResult.inMemoryCatalogs);
 
-  // Step 4: Run all scanners
+  // Step 4: Single-pass directory walk for all lockfile types
   logger.info('core', 'Starting scanners...');
   const scanOpts = { maxDepth: opts.maxDepth };
 
-  const scanResults = {
-    npm: npmScanner.scan(platform, scanOpts),
-    npm_global: npmScanner.scanGlobal(platform),
-    pypi: pypiScanner.scan(platform, scanOpts),
-    go: goScanner.scan(platform, scanOpts),
-    composer: composerScanner.scan(platform, scanOpts),
-    rubygems: rubygemsScanner.scan(platform, scanOpts),
-    cargo: cargoScanner.scan(platform, scanOpts),
-    editor_extensions: editorExtScanner.scan(platform),
-    browser_extensions: browserExtScanner.scan(platform),
-    mcp_configs: mcpScanner.scan(platform),
-  };
+  const lockfileNames = [
+    'package-lock.json', 'pyvenv.cfg', 'requirements.txt',
+    'go.sum', 'composer.lock', 'Gemfile.lock', 'Cargo.lock',
+  ];
+
+  let t0 = Date.now();
+  const foundFiles = findMultipleFiles(platform.projectRoots, lockfileNames, scanOpts);
+  logger.info('core', `Directory walk completed in ${Date.now() - t0}ms`);
+
+  // Pass pre-found files to each scanner (avoids redundant walks)
+  const timedScan = (label, fn) => { t0 = Date.now(); const r = fn(); logger.info('core', `  ${label}: ${Date.now() - t0}ms`); return r; };
+
+  const scanResults = {};
+  scanResults.npm = timedScan('npm', () => npmScanner.scan(platform, scanOpts, foundFiles.get('package-lock.json')));
+  scanResults.npm_global = timedScan('npm-global', () => npmScanner.scanGlobal(platform));
+  scanResults.pypi = timedScan('pypi', () => pypiScanner.scan(platform, scanOpts, {
+    venvConfigs: foundFiles.get('pyvenv.cfg'),
+    reqFiles: foundFiles.get('requirements.txt'),
+  }));
+  scanResults.go = timedScan('go', () => goScanner.scan(platform, scanOpts, foundFiles.get('go.sum')));
+  scanResults.composer = timedScan('composer', () => composerScanner.scan(platform, scanOpts, foundFiles.get('composer.lock')));
+  scanResults.rubygems = timedScan('rubygems', () => rubygemsScanner.scan(platform, scanOpts, foundFiles.get('Gemfile.lock')));
+  scanResults.cargo = timedScan('cargo', () => cargoScanner.scan(platform, scanOpts, foundFiles.get('Cargo.lock')));
+  scanResults.editor_extensions = timedScan('editor-ext', () => editorExtScanner.scan(platform));
+  scanResults.browser_extensions = timedScan('browser-ext', () => browserExtScanner.scan(platform));
+  scanResults.mcp_configs = timedScan('mcp', () => mcpScanner.scan(platform));
 
   if (!opts.noSecrets) {
-    scanResults.secrets_hygiene = secretsScanner.scan(platform);
+    scanResults.secrets_hygiene = timedScan('secrets', () => secretsScanner.scan(platform, scanOpts));
   }
 
   // Discovered user profiles for attributing findings

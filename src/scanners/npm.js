@@ -10,12 +10,8 @@ const SCANNER_ID = 'npm';
  * Scan for npm projects by finding package-lock.json files.
  * Parses lockfile v2/v3 (packages) and v1 (dependencies).
  */
-function scan(platform, opts = {}) {
-  const maxDepth = opts.maxDepth || 6;
-  const roots = platform.projectRoots;
-
-  logger.info(SCANNER_ID, `Searching for package-lock.json in ${roots.length} root dirs...`);
-  const lockfiles = findFiles(roots, 'package-lock.json', { maxDepth });
+function scan(platform, opts = {}, preFoundFiles) {
+  const lockfiles = preFoundFiles || findFiles(platform.projectRoots, 'package-lock.json', { maxDepth: opts.maxDepth || 4 });
   logger.info(SCANNER_ID, `Found ${lockfiles.length} lockfiles`);
 
   const projects = [];

@@ -9,12 +9,8 @@ const SCANNER_ID = 'composer';
 /**
  * Scan PHP Composer packages by finding composer.lock files.
  */
-function scan(platform, opts = {}) {
-  const maxDepth = opts.maxDepth || 6;
-  const roots = platform.projectRoots;
-
-  logger.info(SCANNER_ID, `Searching for composer.lock...`);
-  const lockfiles = findFiles(roots, 'composer.lock', { maxDepth });
+function scan(platform, opts = {}, preFoundFiles) {
+  const lockfiles = preFoundFiles || findFiles(platform.projectRoots, 'composer.lock', { maxDepth: opts.maxDepth || 4 });
   logger.info(SCANNER_ID, `Found ${lockfiles.length} composer.lock files`);
 
   const projects = [];

@@ -13,14 +13,14 @@ const SCANNER_ID = 'pypi';
  * 2. Finding requirements.txt files
  * 3. Checking global/user site-packages
  */
-function scan(platform, opts = {}) {
-  const maxDepth = opts.maxDepth || 6;
+function scan(platform, opts = {}, preFound) {
+  const maxDepth = opts.maxDepth || 4;
   const roots = platform.projectRoots;
   const packages = [];
   const seenKeys = new Set();
 
   // Strategy 1: Find virtualenvs (pyvenv.cfg marks a venv)
-  const venvConfigs = findFiles(roots, 'pyvenv.cfg', { maxDepth: maxDepth });
+  const venvConfigs = (preFound && preFound.venvConfigs) || findFiles(roots, 'pyvenv.cfg', { maxDepth });
   logger.info(SCANNER_ID, `Found ${venvConfigs.length} Python virtual environments`);
 
   for (const cfg of venvConfigs) {
@@ -39,7 +39,7 @@ function scan(platform, opts = {}) {
   }
 
   // Strategy 2: Find requirements.txt
-  const reqFiles = findFiles(roots, 'requirements.txt', { maxDepth });
+  const reqFiles = (preFound && preFound.reqFiles) || findFiles(roots, 'requirements.txt', { maxDepth });
   logger.info(SCANNER_ID, `Found ${reqFiles.length} requirements.txt files`);
 
   for (const reqFile of reqFiles) {

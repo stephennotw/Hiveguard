@@ -9,12 +9,8 @@ const SCANNER_ID = 'rubygems';
 /**
  * Scan Ruby dependencies by finding Gemfile.lock files.
  */
-function scan(platform, opts = {}) {
-  const maxDepth = opts.maxDepth || 6;
-  const roots = platform.projectRoots;
-
-  logger.info(SCANNER_ID, `Searching for Gemfile.lock...`);
-  const lockfiles = findFiles(roots, 'Gemfile.lock', { maxDepth });
+function scan(platform, opts = {}, preFoundFiles) {
+  const lockfiles = preFoundFiles || findFiles(platform.projectRoots, 'Gemfile.lock', { maxDepth: opts.maxDepth || 4 });
   logger.info(SCANNER_ID, `Found ${lockfiles.length} Gemfile.lock files`);
 
   const projects = [];

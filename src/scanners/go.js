@@ -10,12 +10,8 @@ const SCANNER_ID = 'go';
  * Scan Go modules by finding go.sum files.
  * Each line: module version hash
  */
-function scan(platform, opts = {}) {
-  const maxDepth = opts.maxDepth || 6;
-  const roots = platform.projectRoots;
-
-  logger.info(SCANNER_ID, `Searching for go.sum in ${roots.length} root dirs...`);
-  const goSumFiles = findFiles(roots, 'go.sum', { maxDepth });
+function scan(platform, opts = {}, preFoundFiles) {
+  const goSumFiles = preFoundFiles || findFiles(platform.projectRoots, 'go.sum', { maxDepth: opts.maxDepth || 4 });
   logger.info(SCANNER_ID, `Found ${goSumFiles.length} go.sum files`);
 
   const projects = [];

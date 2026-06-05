@@ -9,12 +9,8 @@ const SCANNER_ID = 'cargo';
 /**
  * Scan Rust dependencies by finding Cargo.lock files.
  */
-function scan(platform, opts = {}) {
-  const maxDepth = opts.maxDepth || 6;
-  const roots = platform.projectRoots;
-
-  logger.info(SCANNER_ID, `Searching for Cargo.lock...`);
-  const lockfiles = findFiles(roots, 'Cargo.lock', { maxDepth });
+function scan(platform, opts = {}, preFoundFiles) {
+  const lockfiles = preFoundFiles || findFiles(platform.projectRoots, 'Cargo.lock', { maxDepth: opts.maxDepth || 4 });
   logger.info(SCANNER_ID, `Found ${lockfiles.length} Cargo.lock files`);
 
   const projects = [];

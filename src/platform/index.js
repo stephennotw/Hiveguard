@@ -53,7 +53,9 @@ function getPlatform(customScanDirs) {
 
   // Prune: remove non-existent roots and subdirs already covered by a parent root
   config.projectRoots = pruneRoots(config.projectRoots);
-  logger.info('platform', `Pruned to ${config.projectRoots.length} existing project root(s)`);
+  if (Array.isArray(config.envSearchRoots)) config.envSearchRoots = pruneRoots(config.envSearchRoots);
+  if (Array.isArray(config.pythonRoots)) config.pythonRoots = pruneRoots(config.pythonRoots);
+  logger.info('platform', `Pruned to ${config.projectRoots.length} project root(s), ${(config.envSearchRoots || []).length} env root(s)`);
 
   logger.info('platform', `Detected platform: ${config.id} (${os.arch()})`);
   return config;
