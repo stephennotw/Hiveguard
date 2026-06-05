@@ -90,7 +90,7 @@ if not exist "%ZIP_PATH%" (
 )
 
 echo [bootstrap] Extracting...
-powershell -NoProfile -NonInteractive -Command "Expand-Archive -Path '%ZIP_PATH%' -DestinationPath '%TEMP%' -Force" 2>nul
+powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path '%ZIP_PATH%' -DestinationPath '%TEMP%' -Force" 2>nul
 
 if not exist "%EXTRACT_DIR%\node.exe" (
     echo [bootstrap] ERROR: Extraction failed.

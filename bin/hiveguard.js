@@ -142,6 +142,20 @@ function showHelp() {
   console.log(help);
 }
 
+/**
+ * Extract username from a file path by matching against discovered user home dirs.
+ */
+function resolveUser(filePath, userHomes) {
+  if (!filePath || !userHomes || userHomes.length === 0) return null;
+  const normalized = path.normalize(filePath);
+  for (const home of userHomes) {
+    if (normalized.startsWith(home + path.sep) || normalized === home) {
+      return path.basename(home);
+    }
+  }
+  return null;
+}
+
 // ── Main ──
 async function main() {
   const opts = parseArgs();
@@ -199,8 +213,11 @@ async function main() {
     scanResults.secrets_hygiene = secretsScanner.scan(platform);
   }
 
+  // Discovered user profiles for attributing findings
+  const userHomes = platform.userHomes || [];
+
   // Step 5: Build flat package list for threat matching + CVE checking
-  const flatPackages = buildFlatPackageList(scanResults);
+  const flatPackages = buildFlatPackageList(scanResults, userHomes);
   logger.info('core', `Total components inventoried: ${flatPackages.length}`);
 
   // Step 6: Threat intel matching
@@ -211,13 +228,12 @@ async function main() {
 
   // Step 8: Aggregate findings
   const allFindings = [];
-
-  // Threat matches are critical
   for (const match of threatMatches) {
     for (const t of match.threats) {
       allFindings.push({
         severity: 'critical',
         type: 'supply_chain_compromise',
+        user: resolveUser(match.source || match.project, userHomes),
         ecosystem: match.ecosystem,
         package: match.name,
         version: match.version,
@@ -242,7 +258,7 @@ async function main() {
         existing.project += ', ' + f.project;
       }
     } else {
-      cveMap.set(key, { type: 'known_cve', ...f });
+      cveMap.set(key, { type: 'known_cve', user: resolveUser(f.source || f.project, userHomes), ...f });
     }
   }
   for (const f of cveMap.values()) {
@@ -255,6 +271,7 @@ async function main() {
     for (const f of [...sh.envFiles.findings, ...sh.gitCredentials.findings, ...sh.sshKeys.findings]) {
       allFindings.push({
         type: 'secrets_hygiene',
+        user: resolveUser(f.path, userHomes),
         ecosystem: 'secrets',
         package: f.type || 'secrets-hygiene',
         version: '',
@@ -277,6 +294,7 @@ async function main() {
       version: '1.0.0',
       scan_time: new Date().toISOString(),
       elapsed_seconds: parseFloat(elapsed),
+      users_scanned: userHomes.map(h => path.basename(h)),
       ...systemInfo,
     },
     threat_intel: {
@@ -360,7 +378,7 @@ async function main() {
 /**
  * Flatten all scan results into a unified package list for matching.
  */
-function buildFlatPackageList(scanResults) {
+function buildFlatPackageList(scanResults, userHomes) {
   const packages = [];
 
   // npm projects
@@ -368,6 +386,7 @@ function buildFlatPackageList(scanResults) {
     for (const dep of (proj.dependencies || [])) {
       packages.push({
         ecosystem: 'npm', name: dep.name, version: dep.version,
+        user: resolveUser(proj.lockfile, userHomes),
         project: proj.project, source: proj.lockfile,
         resolved: dep.resolved, confidence: 'high',
       });
@@ -378,6 +397,7 @@ function buildFlatPackageList(scanResults) {
   for (const pkg of (scanResults.npm_global || [])) {
     packages.push({
       ecosystem: 'npm', name: pkg.name, version: pkg.version,
+      user: null,
       project: '(global)', source: 'npm-global',
       confidence: 'high',
     });
@@ -387,6 +407,7 @@ function buildFlatPackageList(scanResults) {
   for (const pkg of (scanResults.pypi.packages || [])) {
     packages.push({
       ecosystem: 'pypi', name: pkg.name, version: pkg.version,
+      user: resolveUser(pkg.source_dir, userHomes),
       project: pkg.source_dir || '', source: pkg.source_type || 'venv',
       installer: pkg.installer, confidence: pkg.confidence || 'high',
     });
@@ -397,6 +418,7 @@ function buildFlatPackageList(scanResults) {
     for (const dep of (proj.dependencies || [])) {
       packages.push({
         ecosystem: 'go', name: dep.name, version: dep.version,
+        user: resolveUser(proj.sum_file, userHomes),
         project: proj.project, source: proj.sum_file,
         confidence: 'high',
       });
@@ -408,6 +430,7 @@ function buildFlatPackageList(scanResults) {
     for (const dep of (proj.dependencies || [])) {
       packages.push({
         ecosystem: 'composer', name: dep.name, version: dep.version,
+        user: resolveUser(proj.lockfile, userHomes),
         project: proj.project, source: proj.lockfile,
         confidence: 'high',
       });
@@ -419,6 +442,7 @@ function buildFlatPackageList(scanResults) {
     for (const dep of (proj.dependencies || [])) {
       packages.push({
         ecosystem: 'rubygems', name: dep.name, version: dep.version,
+        user: resolveUser(proj.lockfile, userHomes),
         project: proj.project, source: proj.lockfile,
         confidence: 'high',
       });
@@ -430,6 +454,7 @@ function buildFlatPackageList(scanResults) {
     for (const dep of (proj.dependencies || [])) {
       packages.push({
         ecosystem: 'cargo', name: dep.name, version: dep.version,
+        user: resolveUser(proj.lockfile, userHomes),
         project: proj.project, source: proj.lockfile,
         confidence: 'high',
       });
@@ -444,6 +469,7 @@ function buildFlatPackageList(scanResults) {
         name: `${ext.publisher}.${ext.name}`,
         displayName: ext.displayName,
         version: ext.version,
+        user: resolveUser(ext.path, userHomes),
         project: editor, source: ext.id,
         confidence: 'high',
       });
@@ -456,6 +482,7 @@ function buildFlatPackageList(scanResults) {
       packages.push({
         ecosystem: 'browser-extension',
         name: ext.name, version: ext.version,
+        user: resolveUser(ext.path, userHomes),
         project: browser, source: ext.extension_id,
         permissions: ext.permissions,
         confidence: 'medium',

@@ -1,37 +1,50 @@
 'use strict';
 
 const os = require('os');
+const fs = require('fs');
 const path = require('path');
 const { existsSafe } = require('../utils/fs-safe');
 const logger = require('../utils/logger');
 
 /**
  * Detect and return the platform-specific config.
+ * Enumerates all user profiles so scans work even when running as SYSTEM.
  * Supports custom scan directories via CLI --scan-dirs flag.
  */
 function getPlatform(customScanDirs) {
-  const platform = os.platform();
-  let config;
+  const platformId = os.platform();
+  let getConfig;
 
-  switch (platform) {
+  switch (platformId) {
     case 'win32':
-      config = require('./windows');
+      getConfig = require('./windows');
       break;
     case 'darwin':
-      config = require('./darwin');
+      getConfig = require('./darwin');
       break;
     case 'linux':
-      config = require('./linux');
+      getConfig = require('./linux');
       break;
     default:
-      logger.warn('platform', `Unsupported platform: ${platform}, falling back to linux paths`);
-      config = require('./linux');
+      logger.warn('platform', `Unsupported platform: ${platformId}, falling back to linux paths`);
+      getConfig = require('./linux');
       break;
   }
 
+  // Enumerate all real user home directories
+  const userHomes = enumerateUserHomes(platformId);
+  logger.info('platform', `Discovered ${userHomes.length} user profile(s): ${userHomes.map(h => path.basename(h)).join(', ')}`);
+
+  // Generate config for each user home and merge them
+  const configs = userHomes.map(home => getConfig(home));
+  let config = mergeConfigs(configs);
+
+  // Expose discovered user homes for username extraction in findings
+  config.userHomes = userHomes;
+
   // Override project roots if custom scan dirs provided
   if (customScanDirs && customScanDirs.length > 0) {
-    config = { ...config, projectRoots: customScanDirs };
+    config = { ...config, projectRoots: customScanDirs, userHomes };
     logger.info('platform', `Using custom scan directories: ${customScanDirs.join(', ')}`);
   }
 
@@ -40,6 +53,93 @@ function getPlatform(customScanDirs) {
 
   logger.info('platform', `Detected platform: ${config.id} (${os.arch()})`);
   return config;
+}
+
+/**
+ * Enumerate all real user home directories on the system.
+ * Filters out system/service accounts.
+ */
+function enumerateUserHomes(platformId) {
+  const homes = [];
+  const skipNames = new Set([
+    'default', 'default user', 'defaultuser0', 'public', 'all users',
+    'defaultaccount', 'guest', 'defaultapppool', 'networkservice',
+    'localservice', 'systemprofile', '.net v4.5', '.net v4.5 classic',
+  ]);
+
+  let usersBase;
+  if (platformId === 'win32') {
+    usersBase = process.env.SystemDrive ? path.join(process.env.SystemDrive, 'Users') : 'C:\\Users';
+  } else if (platformId === 'darwin') {
+    usersBase = '/Users';
+  } else {
+    usersBase = '/home';
+  }
+
+  try {
+    if (!fs.existsSync(usersBase)) return [os.homedir()];
+    const entries = fs.readdirSync(usersBase, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const name = entry.name.toLowerCase();
+      if (name.startsWith('.') || skipNames.has(name)) continue;
+      const homePath = path.join(usersBase, entry.name);
+      homes.push(homePath);
+    }
+  } catch (e) {
+    logger.warn('platform', `Could not enumerate user profiles: ${e.message}`);
+  }
+
+  // Fallback: always include current user's home if nothing found
+  if (homes.length === 0) {
+    homes.push(os.homedir());
+  }
+
+  return homes;
+}
+
+/**
+ * Merge multiple per-user platform configs into one unified config.
+ * Arrays are concatenated (deduplicated). Objects have their values merged into arrays.
+ */
+function mergeConfigs(configs) {
+  if (configs.length === 0) return {};
+  if (configs.length === 1) return configs[0];
+
+  const merged = {};
+
+  for (const cfg of configs) {
+    for (const [key, value] of Object.entries(cfg)) {
+      if (key === 'id') {
+        merged.id = value;
+      } else if (Array.isArray(value)) {
+        if (!merged[key]) merged[key] = [];
+        for (const item of value) {
+          if (!merged[key].includes(item)) merged[key].push(item);
+        }
+      } else if (typeof value === 'object' && value !== null) {
+        // Objects like editorExtensionDirs, browserExtensionDirs
+        // Each value is already an array — merge per sub-key
+        if (!merged[key]) merged[key] = {};
+        for (const [subKey, subVal] of Object.entries(value)) {
+          if (!merged[key][subKey]) merged[key][subKey] = [];
+          const arr = Array.isArray(subVal) ? subVal : [subVal];
+          for (const item of arr) {
+            if (!merged[key][subKey].includes(item)) merged[key][subKey].push(item);
+          }
+        }
+      } else if (typeof value === 'string') {
+        // String properties like goModCache, cargoRegistry, composerGlobalDir
+        // Convert to arrays for multi-user
+        if (!merged[key]) merged[key] = [value];
+        else if (Array.isArray(merged[key])) {
+          if (!merged[key].includes(value)) merged[key].push(value);
+        }
+      }
+    }
+  }
+
+  return merged;
 }
 
 /**

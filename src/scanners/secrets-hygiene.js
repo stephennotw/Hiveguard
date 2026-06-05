@@ -98,15 +98,18 @@ function scanEnvFiles(platform) {
  */
 function scanGitCredentials(platform) {
   const findings = [];
-  const gitConfig = readFileSafe(platform.gitConfigPath);
+  const gitConfigPaths = platform.gitConfigPaths || (platform.gitConfigPath ? [platform.gitConfigPath] : []);
 
-  if (gitConfig) {
+  for (const configPath of gitConfigPaths) {
+    const gitConfig = readFileSafe(configPath);
+    if (!gitConfig) continue;
+
     // Check for plaintext credential storage
     if (gitConfig.includes('credential.helper=store') || gitConfig.includes('helper = store')) {
       findings.push({
         severity: 'high',
         type: 'git_plaintext_credentials',
-        path: platform.gitConfigPath,
+        path: configPath,
         message: 'Git credential helper is set to "store" — credentials saved in plaintext at ~/.git-credentials',
       });
     }
@@ -117,13 +120,13 @@ function scanGitCredentials(platform) {
       findings.push({
         severity: 'high',
         type: 'git_hardcoded_token',
-        path: platform.gitConfigPath,
+        path: configPath,
         message: 'Git config contains URL(s) with embedded credentials',
       });
     }
 
     // Check for .git-credentials file
-    const gitCredsFile = path.join(path.dirname(platform.gitConfigPath), '.git-credentials');
+    const gitCredsFile = path.join(path.dirname(configPath), '.git-credentials');
     if (existsSafe(gitCredsFile)) {
       const stat = statSafe(gitCredsFile);
       findings.push({
@@ -143,96 +146,99 @@ function scanGitCredentials(platform) {
  * NEVER reads private key content beyond header detection.
  */
 function scanSshKeys(platform) {
-  const sshDir = platform.sshDir;
+  const sshDirs = platform.sshDirs || (platform.sshDir ? [platform.sshDir] : []);
   const findings = [];
   const keys = [];
 
-  if (!existsSafe(sshDir)) {
-    logger.debug(SCANNER_ID, 'No .ssh directory found');
-    return { keys, findings };
-  }
-
-  for (const entry of readdirSafe(sshDir)) {
-    const filePath = path.join(sshDir, entry);
-    const stat = statSafe(filePath);
-    if (!stat || !stat.isFile()) continue;
-
-    // Read only first line to detect key type
-    const raw = readFileSafe(filePath);
-    if (!raw) continue;
-
-    const firstLine = raw.split('\n')[0].trim();
-    let keyType = null;
-    let isPrivate = false;
-
-    if (firstLine.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')) {
-      keyType = 'openssh'; isPrivate = true;
-    } else if (firstLine.startsWith('-----BEGIN RSA PRIVATE KEY-----')) {
-      keyType = 'rsa'; isPrivate = true;
-    } else if (firstLine.startsWith('-----BEGIN EC PRIVATE KEY-----')) {
-      keyType = 'ec'; isPrivate = true;
-    } else if (firstLine.startsWith('-----BEGIN DSA PRIVATE KEY-----')) {
-      keyType = 'dsa'; isPrivate = true;
-    } else if (firstLine.startsWith('ssh-rsa ') || firstLine.startsWith('ssh-ed25519 ')
-      || firstLine.startsWith('ecdsa-sha2-')) {
-      keyType = firstLine.split(' ')[0];
-      isPrivate = false;
-    } else {
-      continue; // Not a key file
+  for (const sshDir of sshDirs) {
+    if (!existsSafe(sshDir)) {
+      logger.debug(SCANNER_ID, `No .ssh directory found: ${sshDir}`);
+      continue;
     }
 
-    const ageDays = stat.mtime ? Math.round((Date.now() - stat.mtime.getTime()) / 86400000) : null;
+    for (const entry of readdirSafe(sshDir)) {
+      const filePath = path.join(sshDir, entry);
+      const stat = statSafe(filePath);
+      if (!stat || !stat.isFile()) continue;
 
-    keys.push({
-      filename: entry,
-      keyType: keyType,
-      isPrivate,
-      size: stat.size,
-      modified: stat.mtime?.toISOString() || null,
-      ageDays,
-    });
+      // Read only first line to detect key type
+      const raw = readFileSafe(filePath);
+      if (!raw) continue;
 
-    // Findings
-    if (isPrivate && keyType === 'dsa') {
-      findings.push({
-        severity: 'high',
-        type: 'ssh_weak_key',
+      const firstLine = raw.split('\n')[0].trim();
+      let keyType = null;
+      let isPrivate = false;
+
+      if (firstLine.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')) {
+        keyType = 'openssh'; isPrivate = true;
+      } else if (firstLine.startsWith('-----BEGIN RSA PRIVATE KEY-----')) {
+        keyType = 'rsa'; isPrivate = true;
+      } else if (firstLine.startsWith('-----BEGIN EC PRIVATE KEY-----')) {
+        keyType = 'ec'; isPrivate = true;
+      } else if (firstLine.startsWith('-----BEGIN DSA PRIVATE KEY-----')) {
+        keyType = 'dsa'; isPrivate = true;
+      } else if (firstLine.startsWith('ssh-rsa ') || firstLine.startsWith('ssh-ed25519 ')
+        || firstLine.startsWith('ecdsa-sha2-')) {
+        keyType = firstLine.split(' ')[0];
+        isPrivate = false;
+      } else {
+        continue; // Not a key file
+      }
+
+      const ageDays = stat.mtime ? Math.round((Date.now() - stat.mtime.getTime()) / 86400000) : null;
+
+      keys.push({
+        filename: entry,
+        keyType: keyType,
+        isPrivate,
+        size: stat.size,
+        modified: stat.mtime?.toISOString() || null,
+        ageDays,
         path: filePath,
-        message: `DSA key "${entry}" — DSA is deprecated and considered weak. Migrate to Ed25519.`,
       });
+
+      // Findings
+      if (isPrivate && keyType === 'dsa') {
+        findings.push({
+          severity: 'high',
+          type: 'ssh_weak_key',
+          path: filePath,
+          message: `DSA key "${entry}" — DSA is deprecated and considered weak. Migrate to Ed25519.`,
+        });
+      }
+
+      if (isPrivate && keyType === 'rsa') {
+        findings.push({
+          severity: 'low',
+          type: 'ssh_rsa_key',
+          path: filePath,
+          message: `RSA key "${entry}" — consider migrating to Ed25519 for better security.`,
+        });
+      }
+
+      if (isPrivate && ageDays && ageDays > 365) {
+        findings.push({
+          severity: 'low',
+          type: 'ssh_old_key',
+          path: filePath,
+          message: `SSH key "${entry}" is ${ageDays} days old. Consider rotating keys annually.`,
+        });
+      }
     }
 
-    if (isPrivate && keyType === 'rsa') {
-      findings.push({
-        severity: 'low',
-        type: 'ssh_rsa_key',
-        path: filePath,
-        message: `RSA key "${entry}" — consider migrating to Ed25519 for better security.`,
-      });
-    }
-
-    if (isPrivate && ageDays && ageDays > 365) {
-      findings.push({
-        severity: 'low',
-        type: 'ssh_old_key',
-        path: filePath,
-        message: `SSH key "${entry}" is ${ageDays} days old. Consider rotating keys annually.`,
-      });
-    }
-  }
-
-  // Check for authorized_keys (unexpected authorized keys could be persistence)
-  const authKeys = path.join(sshDir, 'authorized_keys');
-  if (existsSafe(authKeys)) {
-    const raw = readFileSafe(authKeys);
-    const keyCount = raw ? raw.split('\n').filter(l => l.trim() && !l.startsWith('#')).length : 0;
-    if (keyCount > 0) {
-      findings.push({
-        severity: 'info',
-        type: 'ssh_authorized_keys',
-        path: authKeys,
-        message: `${keyCount} authorized SSH key(s) — review for unexpected entries.`,
-      });
+    // Check for authorized_keys (unexpected authorized keys could be persistence)
+    const authKeys = path.join(sshDir, 'authorized_keys');
+    if (existsSafe(authKeys)) {
+      const raw = readFileSafe(authKeys);
+      const keyCount = raw ? raw.split('\n').filter(l => l.trim() && !l.startsWith('#')).length : 0;
+      if (keyCount > 0) {
+        findings.push({
+          severity: 'info',
+          type: 'ssh_authorized_keys',
+          path: authKeys,
+          message: `${keyCount} authorized SSH key(s) — review for unexpected entries.`,
+        });
+      }
     }
   }
 
