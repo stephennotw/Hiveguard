@@ -122,16 +122,17 @@ The `.node/` directory is gitignored and never committed to the repo.
 HiveGuard is designed to be pushed to endpoints via any management tool (Tanium, Jamf, Intune, Ansible, etc.).
 No prerequisites required — the bootstrap wrappers download Node.js automatically if needed.
 
-### Option A: ZIP Package (recommended for Tanium)
+### Option A: ZIP Package (recommended for Tanium / remote deployment)
 
-1. **Prepare** — Zip the `hiveguard/` folder into `hiveguard.zip`
-2. **Upload** — Upload `run.bat` (or `run.ps1`) **and** `hiveguard.zip` as package files
-3. **Command** — Set the package command to:
-   - **Windows (CMD)**: `cmd /c run.bat --json --output C:\ProgramData\HiveGuard`
-   - **Windows (PowerShell)**: `powershell -ExecutionPolicy Bypass -File run.ps1 --json --output C:\ProgramData\HiveGuard`
-   - **macOS/Linux**: `bash run.sh --json --output /tmp/hiveguard`
+1. **Prepare** — Zip the entire `hiveguard/` folder into `hiveguard.zip`
+2. **Upload** — Upload `hiveguard.zip` as the package file
+3. **Command** — The package command extracts the ZIP, then runs the bootstrap:
+   - **Windows**: `cmd /c powershell -NoProfile -Command "Expand-Archive -Path 'hiveguard.zip' -DestinationPath '.' -Force" && hiveguard\hiveguard\run.bat --json --output C:\ProgramData\HiveGuard`
+   - **macOS/Linux**: `unzip -qo hiveguard.zip && hiveguard/hiveguard/run.sh --json --output /tmp/hiveguard`
 
-The bootstrap wrappers **auto-extract** `hiveguard.zip` (or `hiveguard.tar.gz`) on first run if `bin/hiveguard.js` is not found next to them. No manual extraction step needed.
+> **Important:**
+> - The `--output` directory is auto-created by the bootstrap wrappers — no need to pre-create it.
+> - **Do not** add `> results.json` to the command. The `--output` flag already writes all results (JSON + HTML) to the specified directory. Adding a shell redirect can cause "path not found" errors.
 
 ### Option B: Direct Copy
 
@@ -153,9 +154,9 @@ The bootstrap wrappers **auto-extract** `hiveguard.zip` (or `hiveguard.tar.gz`) 
 
 | Step | Where | What |
 |---|---|---|
-| Create package | Administration → Content → Packages → New Package | Upload `run.bat` + `hiveguard.zip` |
-| Set command | Package → Command field | `cmd /c run.bat --json --output C:\ProgramData\HiveGuard` |
-| Set timeout | Package → Command Timeout | `300` seconds |
+| Create package | Administration → Content → Packages → New Package | Upload `hiveguard.zip` |
+| Set command | Package → Command field | `cmd /c powershell -NoProfile -Command "Expand-Archive -Path 'hiveguard.zip' -DestinationPath '.' -Force" && hiveguard\hiveguard\run.bat --json --output C:\ProgramData\HiveGuard` |
+| Set timeout | Package → Command Timeout | `600` seconds (extraction + possible Node.js download) |
 | Target endpoints | Interact → Ask question | `Get Computer Name from all machines` |
 | Deploy | Select endpoints → Deploy Action → choose package | Run once or schedule |
 | Collect results | Create sensor to read `C:\ProgramData\HiveGuard\*.json` | Pull back via Interact |

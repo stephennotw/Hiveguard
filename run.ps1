@@ -22,31 +22,8 @@ for ($i = 0; $i -lt $HiveGuardArgs.Count; $i++) {
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
-# Auto-extract hiveguard.zip if bin\hiveguard.js not found
-# This handles Tanium/endpoint deployment where hiveguard.zip is uploaded as a package
-$binCheck = Join-Path (Join-Path $ScriptDir 'bin') 'hiveguard.js'
-if (-not (Test-Path $binCheck)) {
-    $zipFile = Join-Path $ScriptDir 'hiveguard.zip'
-    if (Test-Path $zipFile) {
-        Write-Host "[bootstrap] Extracting hiveguard.zip..." -ForegroundColor Cyan
-        Expand-Archive -Path $zipFile -DestinationPath $ScriptDir -Force
-        # Check if extracted into subfolder (hiveguard\bin\...) or flat (bin\...)
-        $subFolder = Join-Path $ScriptDir 'hiveguard'
-        $subBinCheck = Join-Path (Join-Path $subFolder 'bin') 'hiveguard.js'
-        if (Test-Path $subBinCheck) {
-            $ScriptDir = $subFolder
-            Write-Host "[bootstrap] Extracted to subfolder: $ScriptDir" -ForegroundColor DarkGray
-        } elseif (Test-Path $binCheck) {
-            Write-Host "[bootstrap] Extracted to current directory" -ForegroundColor DarkGray
-        } else {
-            Write-Host "[bootstrap] ERROR: hiveguard.zip does not contain bin\hiveguard.js" -ForegroundColor Red
-            exit 3
-        }
-    } else {
-        Write-Host "[bootstrap] ERROR: bin\hiveguard.js not found and no hiveguard.zip to extract." -ForegroundColor Red
-        exit 3
-    }
-}
+# Change to the directory where this script lives
+Set-Location -Path $ScriptDir
 
 $NodeDir = Join-Path $ScriptDir '.node'
 $NodeExe = Join-Path $NodeDir 'node.exe'
