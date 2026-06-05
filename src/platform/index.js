@@ -51,6 +51,10 @@ function getPlatform(customScanDirs) {
   // Resolve glob-like paths (e.g., C:\Python* -> actual dirs)
   config.projectRoots = resolveGlobRoots(config.projectRoots);
 
+  // Prune: remove non-existent roots and subdirs already covered by a parent root
+  config.projectRoots = pruneRoots(config.projectRoots);
+  logger.info('platform', `Pruned to ${config.projectRoots.length} existing project root(s)`);
+
   logger.info('platform', `Detected platform: ${config.id} (${os.arch()})`);
   return config;
 }
@@ -140,6 +144,32 @@ function mergeConfigs(configs) {
   }
 
   return merged;
+}
+
+/**
+ * Prune project roots: remove non-existent dirs and subdirectories
+ * already covered by a shallower root (since scanners walk to depth 6).
+ */
+function pruneRoots(roots) {
+  // 1. Filter to only existing directories
+  const existing = roots.filter(r => existsSafe(r));
+
+  // 2. Normalize paths for comparison
+  const normalized = existing.map(r => path.resolve(r));
+
+  // 3. Sort shortest first so parents come before children
+  normalized.sort((a, b) => a.length - b.length);
+
+  // 4. Remove subdirs already covered by a parent root
+  const kept = [];
+  for (const dir of normalized) {
+    const isChild = kept.some(parent => dir.startsWith(parent + path.sep));
+    if (!isChild) {
+      kept.push(dir);
+    }
+  }
+
+  return kept;
 }
 
 /**
