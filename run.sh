@@ -20,6 +20,29 @@ for arg in "$@"; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Auto-extract hiveguard archive if bin/hiveguard.js not found
+# This handles Tanium/Jamf/Ansible deployment where an archive is pushed
+if [ ! -f "$SCRIPT_DIR/bin/hiveguard.js" ]; then
+    if [ -f "$SCRIPT_DIR/hiveguard.zip" ]; then
+        echo "[bootstrap] Extracting hiveguard.zip..." >&2
+        unzip -qo "$SCRIPT_DIR/hiveguard.zip" -d "$SCRIPT_DIR"
+    elif [ -f "$SCRIPT_DIR/hiveguard.tar.gz" ]; then
+        echo "[bootstrap] Extracting hiveguard.tar.gz..." >&2
+        tar -xzf "$SCRIPT_DIR/hiveguard.tar.gz" -C "$SCRIPT_DIR"
+    fi
+    # Check if extracted into subfolder (hiveguard/bin/...) or flat (bin/...)
+    if [ -f "$SCRIPT_DIR/hiveguard/bin/hiveguard.js" ]; then
+        SCRIPT_DIR="$SCRIPT_DIR/hiveguard"
+        echo "[bootstrap] Extracted to subfolder: $SCRIPT_DIR" >&2
+    elif [ -f "$SCRIPT_DIR/bin/hiveguard.js" ]; then
+        echo "[bootstrap] Extracted to current directory" >&2
+    else
+        echo "[bootstrap] ERROR: Archive does not contain bin/hiveguard.js" >&2
+        exit 3
+    fi
+fi
+
 NODE_DIR="$SCRIPT_DIR/.node"
 HIVEGUARD_JS="$SCRIPT_DIR/bin/hiveguard.js"
 REQUIRED_MAJOR=18

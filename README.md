@@ -119,21 +119,48 @@ The `.node/` directory is gitignored and never committed to the repo.
 
 ## Endpoint Deployment
 
-HiveGuard is designed to be pushed to endpoints via any management tool (Jamf, Tanium, Intune, Ansible, etc.).
+HiveGuard is designed to be pushed to endpoints via any management tool (Tanium, Jamf, Intune, Ansible, etc.).
 No prerequisites required — the bootstrap wrappers download Node.js automatically if needed.
+
+### Option A: ZIP Package (recommended for Tanium)
+
+1. **Prepare** — Zip the `hiveguard/` folder into `hiveguard.zip`
+2. **Upload** — Upload `run.bat` (or `run.ps1`) **and** `hiveguard.zip` as package files
+3. **Command** — Set the package command to:
+   - **Windows (CMD)**: `cmd /c run.bat --json --output C:\ProgramData\HiveGuard`
+   - **Windows (PowerShell)**: `powershell -ExecutionPolicy Bypass -File run.ps1 --json --output C:\ProgramData\HiveGuard`
+   - **macOS/Linux**: `bash run.sh --json --output /tmp/hiveguard`
+
+The bootstrap wrappers **auto-extract** `hiveguard.zip` (or `hiveguard.tar.gz`) on first run if `bin/hiveguard.js` is not found next to them. No manual extraction step needed.
+
+### Option B: Direct Copy
 
 1. **Deploy** — Copy the entire `hiveguard/` directory to the endpoint
 2. **Run** — Execute the bootstrap wrapper:
-   - **Windows (CMD)**: `cmd /c C:\path\to\hiveguard\run.bat --json --output C:\ProgramData\HiveGuard > results.json`
-   - **Windows (PowerShell)**: `powershell -ExecutionPolicy Bypass -File C:\path\to\hiveguard\run.ps1 --json --output C:\ProgramData\HiveGuard > results.json`
-   - **macOS/Linux**: `/path/to/hiveguard/run.sh --json --output /tmp/hiveguard > results.json`
-3. **Collect** — Gather `results.json` from each endpoint
-4. **Alert** — Use the exit code for automated alerting:
-   - `0` = clean
-   - `1` = findings present (review recommended)
-   - `2` = **critical** — supply chain compromise detected (escalate immediately)
+   - **Windows (CMD)**: `cmd /c C:\path\to\hiveguard\run.bat --json --output C:\ProgramData\HiveGuard`
+   - **Windows (PowerShell)**: `powershell -ExecutionPolicy Bypass -File C:\path\to\hiveguard\run.ps1 --json --output C:\ProgramData\HiveGuard`
+   - **macOS/Linux**: `/path/to/hiveguard/run.sh --json --output /tmp/hiveguard`
 
-No admin/root privileges required. If the endpoint already has Node.js 18+, the wrapper uses it directly. Otherwise it downloads a portable binary on first run (~30MB, cached for subsequent scans).
+### Collecting Results
+
+- **Collect** — Gather the JSON output from the `--output` directory on each endpoint
+- **Alert** — Use the exit code for automated alerting:
+  - `0` = clean
+  - `1` = findings present (review recommended)
+  - `2` = **critical** — supply chain compromise detected (escalate immediately)
+
+### Tanium 7.8 On-Prem Quick Reference
+
+| Step | Where | What |
+|---|---|---|
+| Create package | Administration → Content → Packages → New Package | Upload `run.bat` + `hiveguard.zip` |
+| Set command | Package → Command field | `cmd /c run.bat --json --output C:\ProgramData\HiveGuard` |
+| Set timeout | Package → Command Timeout | `300` seconds |
+| Target endpoints | Interact → Ask question | `Get Computer Name from all machines` |
+| Deploy | Select endpoints → Deploy Action → choose package | Run once or schedule |
+| Collect results | Create sensor to read `C:\ProgramData\HiveGuard\*.json` | Pull back via Interact |
+
+No admin/root privileges required. If the endpoint already has Node.js 18+, the wrapper uses it directly. Otherwise it downloads a portable binary on first run (~30MB, cached for subsequent scans). The `--output` directory is auto-created by the bootstrap wrappers.
 
 ## Output Structure
 

@@ -7,11 +7,35 @@ REM Example: run.bat --offline --output C:\results --verbose
 setlocal enabledelayedexpansion
 
 set "SCRIPT_DIR=%~dp0"
+set "NODE_VERSION=v22.15.0"
+set "NODE_DIST=https://nodejs.org/dist/%NODE_VERSION%"
+
+REM --- Auto-extract hiveguard.zip if bin\hiveguard.js not found ---
+REM This handles Tanium/endpoint deployment where hiveguard.zip is uploaded as a package
+if not exist "%SCRIPT_DIR%bin\hiveguard.js" (
+    if exist "%SCRIPT_DIR%hiveguard.zip" (
+        echo [bootstrap] Extracting hiveguard.zip...
+        powershell -NoProfile -NonInteractive -Command "Expand-Archive -Path '%SCRIPT_DIR%hiveguard.zip' -DestinationPath '%SCRIPT_DIR%' -Force" 2>nul
+        REM After extraction, check if files are in a subfolder (hiveguard\bin\...) or flat (bin\...)
+        if exist "%SCRIPT_DIR%hiveguard\bin\hiveguard.js" (
+            REM Extracted into subfolder — update SCRIPT_DIR to point inside it
+            set "SCRIPT_DIR=%SCRIPT_DIR%hiveguard\"
+            echo [bootstrap] Extracted to subfolder: !SCRIPT_DIR!
+        ) else if exist "%SCRIPT_DIR%bin\hiveguard.js" (
+            echo [bootstrap] Extracted to current directory
+        ) else (
+            echo [bootstrap] ERROR: hiveguard.zip does not contain bin\hiveguard.js
+            exit /b 3
+        )
+    ) else (
+        echo [bootstrap] ERROR: bin\hiveguard.js not found and no hiveguard.zip to extract.
+        exit /b 3
+    )
+)
+
 set "NODE_DIR=%SCRIPT_DIR%.node"
 set "NODE_EXE=%NODE_DIR%\node.exe"
 set "HIVEGUARD_JS=%SCRIPT_DIR%bin\hiveguard.js"
-set "NODE_VERSION=v22.15.0"
-set "NODE_DIST=https://nodejs.org/dist/%NODE_VERSION%"
 
 REM --- Pre-create output directory if --output is specified ---
 set "OUTPUT_DIR="
