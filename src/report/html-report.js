@@ -18,7 +18,7 @@ function generateReport(result) {
   const searchPkgs = packages.map((p, i) => ({
     id: i, eco: p.ecosystem, name: p.name, ver: p.version,
     proj: p.project || '', src: p.source || '', conf: p.confidence || 'high',
-    dn: p.displayName || '', res: p.resolved || '',
+    dn: p.displayName || '', res: p.resolved || '', user: p.user || '',
     threat: threatMatches.some(m => m.name === p.name && m.version === p.version && m.ecosystem === p.ecosystem),
   }));
 
@@ -125,7 +125,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   const critCount = findings.filter(f => f.severity === 'critical' || f.severity === 'high').length;
   html += `<div class="sidebar"><div class="sidebar-header">
     <h1>🐝 HiveGuard</h1>
-    <div class="meta">${esc(meta.hostname)} · ${esc(meta.username)} · ${new Date(meta.scan_time).toLocaleDateString()}</div>
+    <div class="meta">${esc(meta.hostname)} · ${(meta.users_scanned || []).length > 0 ? esc((meta.users_scanned || []).join(', ')) : esc(meta.username)} · ${new Date(meta.scan_time).toLocaleDateString()}</div>
   </div><div class="sidebar-nav">
     <div class="nav-item active" onclick="showPanel('overview')">📊 Overview</div>
     <div class="nav-item" onclick="showPanel('search')">🔍 All Packages<span class="badge">${packages.length.toLocaleString()}</span></div>
@@ -200,7 +200,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<div class="stats-row"><div class="stat" style="flex:3"><div class="lbl" style="margin-bottom:.5rem">Scan Metadata</div>
     <div style="font-size:.8rem;color:var(--text-dim)">
       <strong>Host:</strong> ${esc(meta.hostname)} | <strong>OS:</strong> ${esc(meta.platform)}/${esc(meta.arch)} |
-      <strong>User:</strong> ${esc(meta.username)} | <strong>Node:</strong> ${esc(meta.nodeVersion)} |
+      <strong>User:</strong> ${esc(meta.username)} | <strong>Users Scanned:</strong> ${esc((meta.users_scanned || []).join(', ') || 'n/a')} | <strong>Node:</strong> ${esc(meta.nodeVersion)} |
       <strong>Scan:</strong> ${esc(meta.scan_time)} | <strong>Duration:</strong> ${meta.elapsed_seconds}s |
       <strong>Catalogs:</strong> ${ti.catalogs_loaded} | <strong>Intel Source:</strong> ${esc(ti.source || 'none')}${ti.custom_catalogs ? ` (${ti.custom_catalogs} custom)` : ''}
     </div></div></div>`;
@@ -240,14 +240,14 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   }
   html += `<span class="filter-chip threat-filter" onclick="setEcoFilter(this,'threats')">⚠ Threats Only</span></div>`;
   html += `<div style="max-height:calc(100vh - 280px);overflow-y:auto"><table>
-    <thead><tr><th>Eco</th><th>Package</th><th>Version</th><th>Project</th><th>Status</th></tr></thead>
+    <thead><tr><th>Eco</th><th>Package</th><th>Version</th><th>User</th><th>Project</th><th>Status</th></tr></thead>
     <tbody id="searchTableBody">`;
   for (const p of searchPkgs) {
     const cls = p.threat ? ' class="threat-row"' : '';
     const badge = p.threat ? '<span class="sev sev-critical">⚠</span>' : '<span style="color:var(--green)">✓</span>';
-    html += `<tr${cls} onclick="showDetail(${p.id})" data-eco="${esc(p.eco)}" data-s="${esc((p.name + ' ' + p.ver + ' ' + p.eco + ' ' + p.proj + ' ' + p.dn).toLowerCase())}">`;
+    html += `<tr${cls} onclick="showDetail(${p.id})" data-eco="${esc(p.eco)}" data-s="${esc((p.name + ' ' + p.ver + ' ' + p.eco + ' ' + p.proj + ' ' + p.dn + ' ' + (p.user || '')).toLowerCase())}">`;
     html += `<td><span class="sev sev-low" style="font-size:.62rem">${esc(p.eco)}</span></td>`;
-    html += `<td>${esc(p.name)}</td><td>${esc(p.ver)}</td><td style="font-size:.72rem;color:var(--text-dim)">${esc(p.proj)}</td><td>${badge}</td></tr>`;
+    html += `<td>${esc(p.name)}</td><td>${esc(p.ver)}</td><td style="font-size:.72rem;color:var(--accent-light)">${esc(p.user || '')}</td><td style="font-size:.72rem;color:var(--text-dim)">${esc(p.proj)}</td><td>${badge}</td></tr>`;
   }
   html += `</tbody></table></div></div>`;
 
@@ -284,7 +284,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
     const loc = f.project ? `<br><span style="font-size:.72rem;color:var(--text-muted)">📁 Found in: <code>${esc(f.project)}</code></span>` : f.path ? `<br><span style="font-size:.72rem;color:var(--text-muted)">📁 Location: <code>${esc(f.path)}</code></span>` : '';
     html += `<div style="margin-bottom:.6rem;font-size:.85rem;padding:.6rem .75rem;background:var(--surface);border-radius:8px;border-left:3px solid var(--${borderColor})">
       <span class="sev sev-${f.severity}">${f.severity}</span> <span class="sev sev-low" style="font-size:.6rem">${esc(f.ecosystem || '')}</span>
-      ${pkgLabel}${esc(f.text)}
+      ${f.user ? `<span style="font-size:.68rem;color:var(--accent-light);margin-right:.3rem">[${esc(f.user)}]</span>` : ''}${pkgLabel}${esc(f.text)}
       ${f.cve ? `<br><a href="https://nvd.nist.gov/vuln/detail/${esc(f.cve)}" target="_blank" style="color:var(--blue);font-size:.72rem">${esc(f.cve)}</a>` : ''}${loc}
     </div>`;
   }
@@ -294,7 +294,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<div class="panel" id="panel-npm"><h2 style="color:#fff;margin-bottom:1rem">📦 npm</h2>`;
   for (const proj of (ecosystems.npm?.projects || [])) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-      <h3>${esc(proj.project)}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${proj.total_dependencies} deps</span>
+      <h3>${esc(proj.project)}${proj.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(proj.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${proj.total_dependencies} deps</span>
     </div><div class="card-body collapsed">
       <input type="text" style="width:100%;padding:.4rem .6rem;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.8rem;margin-bottom:.5rem;outline:none" placeholder="Filter..." oninput="filterTable(this)">
       <table><thead><tr><th>Package</th><th>Version</th></tr></thead><tbody>`;
@@ -308,9 +308,9 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
 
   // ── PYPI PANEL ──
   html += `<div class="panel" id="panel-pypi"><h2 style="color:#fff;margin-bottom:1rem">🐍 Python</h2>
-    <table><thead><tr><th>Package</th><th>Version</th><th>Source</th></tr></thead><tbody>`;
+    <table><thead><tr><th>Package</th><th>Version</th><th>User</th><th>Source</th></tr></thead><tbody>`;
   for (const p of (ecosystems.pypi?.packages || [])) {
-    html += `<tr><td>${esc(p.name)}</td><td>${esc(p.version)}</td><td style="font-size:.72rem;color:var(--text-dim)">${esc(p.source_type || '')}</td></tr>`;
+    html += `<tr><td>${esc(p.name)}</td><td>${esc(p.version)}</td><td style="font-size:.72rem;color:var(--accent-light)">${esc(p.user || '')}</td><td style="font-size:.72rem;color:var(--text-dim)">${esc(p.source_type || '')}</td></tr>`;
   }
   html += `</tbody></table></div>`;
 
@@ -318,7 +318,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<div class="panel" id="panel-go"><h2 style="color:#fff;margin-bottom:1rem">🔷 Go</h2>`;
   for (const proj of (ecosystems.go?.projects || [])) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-      <h3>${esc(proj.project)}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${proj.total_dependencies} deps</span>
+      <h3>${esc(proj.project)}${proj.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(proj.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${proj.total_dependencies} deps</span>
     </div><div class="card-body collapsed"><table><thead><tr><th>Module</th><th>Version</th></tr></thead><tbody>`;
     for (const d of (proj.dependencies || []).slice(0, 300)) {
       html += `<tr><td>${esc(d.name)}</td><td>${esc(d.version)}</td></tr>`;
@@ -333,17 +333,17 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   for (const [editor, exts] of Object.entries(ecosystems.editor_extensions?.editors || {})) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
       <h3>${esc(editor)}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${exts.length}</span>
-    </div><div class="card-body"><table><thead><tr><th>Publisher</th><th>Extension</th><th>Version</th></tr></thead><tbody>`;
-    for (const e of exts) html += `<tr><td>${esc(e.publisher)}</td><td>${esc(e.displayName)}</td><td>${esc(e.version)}</td></tr>`;
+    </div><div class="card-body"><table><thead><tr><th>Publisher</th><th>Extension</th><th>Version</th><th>User</th></tr></thead><tbody>`;
+    for (const e of exts) html += `<tr><td>${esc(e.publisher)}</td><td>${esc(e.displayName)}</td><td>${esc(e.version)}</td><td style="font-size:.72rem;color:var(--accent-light)">${esc(e.user || '')}</td></tr>`;
     html += `</tbody></table></div></div>`;
   }
   for (const [browser, exts] of Object.entries(ecosystems.browser_extensions?.browsers || {})) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
       <h3>${esc(browser)}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${exts.length}</span>
-    </div><div class="card-body"><table><thead><tr><th>Name</th><th>Version</th><th>Permissions</th></tr></thead><tbody>`;
+    </div><div class="card-body"><table><thead><tr><th>Name</th><th>Version</th><th>User</th><th>Permissions</th></tr></thead><tbody>`;
     for (const e of exts) {
       const name = e.name.startsWith('__MSG_') ? `(${e.extension_id.slice(0, 16)}...)` : e.name;
-      html += `<tr><td>${esc(name)}</td><td>${esc(e.version)}</td><td style="font-size:.65rem;color:var(--text-dim)">${(e.permissions || []).slice(0, 8).map(esc).join(', ')}</td></tr>`;
+      html += `<tr><td>${esc(name)}</td><td>${esc(e.version)}</td><td style="font-size:.72rem;color:var(--accent-light)">${esc(e.user || '')}</td><td style="font-size:.65rem;color:var(--text-dim)">${(e.permissions || []).slice(0, 8).map(esc).join(', ')}</td></tr>`;
     }
     html += `</tbody></table></div></div>`;
   }
@@ -353,7 +353,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<div class="panel" id="panel-mcp"><h2 style="color:#fff;margin-bottom:1rem">🔗 MCP Configs</h2>`;
   for (const cfg of (ecosystems.mcp_configs?.configs || [])) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-      <h3>${esc(cfg.config_name)}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${cfg.server_count} servers</span>
+      <h3>${esc(cfg.config_name)}${cfg.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(cfg.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${cfg.server_count} servers</span>
     </div><div class="card-body">`;
     for (const srv of (cfg.servers || [])) {
       html += `<div class="mcp-entry"><div class="name">${esc(srv.name)}</div>
@@ -390,6 +390,7 @@ b+='<div class="detail-grid">';b+='<div class="label">Ecosystem</div><div class=
 b+='<div class="label">Package</div><div class="value">'+esc(p.name)+'</div>';
 if(p.dn)b+='<div class="label">Display Name</div><div class="value">'+esc(p.dn)+'</div>';
 b+='<div class="label">Version</div><div class="value">'+esc(p.ver)+'</div>';
+if(p.user)b+='<div class="label">User</div><div class="value">'+esc(p.user)+'</div>';
 b+='<div class="label">Project</div><div class="value">'+esc(p.proj)+'</div>';
 b+='<div class="label">Source</div><div class="value">'+esc(p.src)+'</div>';
 if(p.res)b+='<div class="label">Resolved</div><div class="value"><a href="'+esc(p.res)+'" target="_blank">'+esc(p.res)+'</a></div>';
@@ -401,7 +402,7 @@ for(const s of same)b+='<span style="background:var(--surface3);padding:.2rem .5
 b+='</div></div>'}
 document.getElementById('modalBody').innerHTML=b;document.getElementById('modalOverlay').classList.add('show')}
 function closeModal(){document.getElementById('modalOverlay').classList.remove('show')}
-function exportCSV(){let c='Ecosystem,Package,Version,Project,Source,Threat\\n';document.querySelectorAll('#searchTableBody tr').forEach(r=>{if(r.style.display==='none')return;const id=parseInt(r.getAttribute('onclick').match(/\\d+/)[0]);const p=P[id];c+=[p.eco,'"'+p.name+'"',p.ver,'"'+p.proj+'"','"'+p.src+'"',p.threat].join(',')+'\\n'});const b=new Blob([c],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='hiveguard-${esc(meta.hostname)}.csv';a.click()}
+function exportCSV(){let c='Ecosystem,Package,Version,User,Project,Source,Threat\\n';document.querySelectorAll('#searchTableBody tr').forEach(r=>{if(r.style.display==='none')return;const id=parseInt(r.getAttribute('onclick').match(/\\d+/)[0]);const p=P[id];c+=[p.eco,'"'+p.name+'"',p.ver,'"'+(p.user||'')+'"','"'+p.proj+'"','"'+p.src+'"',p.threat].join(',')+'\\n'});const b=new Blob([c],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='hiveguard-${esc(meta.hostname)}.csv';a.click()}
 function exportJSON(){const v=[];document.querySelectorAll('#searchTableBody tr').forEach(r=>{if(r.style.display==='none')return;const id=parseInt(r.getAttribute('onclick').match(/\\d+/)[0]);v.push(P[id])});const b=new Blob([JSON.stringify(v,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='hiveguard-${esc(meta.hostname)}.json';a.click()}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();showPanel('search');document.getElementById('globalSearch').focus()}});
 </script></body></html>`;

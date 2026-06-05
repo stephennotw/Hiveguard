@@ -231,6 +231,35 @@ async function main() {
   // Discovered user profiles for attributing findings
   const userHomes = platform.userHomes || [];
 
+  // Step 4b: Enrich scanner results with user attribution
+  for (const proj of (scanResults.npm?.projects || [])) {
+    proj.user = resolveUser(proj.lockfile || proj.project_path, userHomes);
+  }
+  for (const pkg of (scanResults.pypi?.packages || [])) {
+    pkg.user = resolveUser(pkg.source_dir || pkg.venv_path, userHomes);
+  }
+  for (const proj of (scanResults.go?.projects || [])) {
+    proj.user = resolveUser(proj.sum_file || proj.project_path, userHomes);
+  }
+  for (const proj of (scanResults.composer?.projects || [])) {
+    proj.user = resolveUser(proj.lockfile || proj.project_path, userHomes);
+  }
+  for (const proj of (scanResults.rubygems?.projects || [])) {
+    proj.user = resolveUser(proj.lockfile || proj.project_path, userHomes);
+  }
+  for (const proj of (scanResults.cargo?.projects || [])) {
+    proj.user = resolveUser(proj.lockfile || proj.project_path, userHomes);
+  }
+  for (const [, exts] of Object.entries(scanResults.editor_extensions?.editors || {})) {
+    for (const ext of exts) ext.user = resolveUser(ext.path, userHomes);
+  }
+  for (const [, exts] of Object.entries(scanResults.browser_extensions?.browsers || {})) {
+    for (const ext of exts) ext.user = resolveUser(ext.path, userHomes);
+  }
+  for (const cfg of (scanResults.mcp_configs?.configs || [])) {
+    cfg.user = resolveUser(cfg.config_path, userHomes);
+  }
+
   // Step 5: Build flat package list for threat matching + CVE checking
   const flatPackages = buildFlatPackageList(scanResults, userHomes);
   logger.info('core', `Total components inventoried: ${flatPackages.length}`);
