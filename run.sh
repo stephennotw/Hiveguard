@@ -6,6 +6,19 @@
 
 set -euo pipefail
 
+# Pre-create output directory if --output is specified
+PREV_ARG=""
+for arg in "$@"; do
+    if [ "$PREV_ARG" = "--output" ]; then
+        if [ ! -d "$arg" ]; then
+            mkdir -p "$arg"
+            echo "[bootstrap] Created output directory: $arg" >&2
+        fi
+        break
+    fi
+    PREV_ARG="$arg"
+done
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NODE_DIR="$SCRIPT_DIR/.node"
 HIVEGUARD_JS="$SCRIPT_DIR/bin/hiveguard.js"

@@ -7,6 +7,19 @@
 
 $ErrorActionPreference = 'Stop'
 $HiveGuardArgs = $args
+
+# Pre-create output directory if --output is specified
+for ($i = 0; $i -lt $HiveGuardArgs.Count; $i++) {
+    if ($HiveGuardArgs[$i] -eq '--output' -and ($i + 1) -lt $HiveGuardArgs.Count) {
+        $outDir = $HiveGuardArgs[$i + 1]
+        if (-not (Test-Path $outDir)) {
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            Write-Host "[bootstrap] Created output directory: $outDir" -ForegroundColor DarkGray
+        }
+        break
+    }
+}
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $NodeDir = Join-Path $ScriptDir '.node'
 $NodeExe = Join-Path $NodeDir 'node.exe'

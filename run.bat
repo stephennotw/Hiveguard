@@ -13,6 +13,22 @@ set "HIVEGUARD_JS=%SCRIPT_DIR%bin\hiveguard.js"
 set "NODE_VERSION=v22.15.0"
 set "NODE_DIST=https://nodejs.org/dist/%NODE_VERSION%"
 
+REM --- Pre-create output directory if --output is specified ---
+set "OUTPUT_DIR="
+set "PREV_ARG="
+for %%a in (%*) do (
+    if "!PREV_ARG!"=="--output" (
+        set "OUTPUT_DIR=%%~a"
+    )
+    set "PREV_ARG=%%~a"
+)
+if defined OUTPUT_DIR (
+    if not exist "!OUTPUT_DIR!" (
+        mkdir "!OUTPUT_DIR!" 2>nul
+        echo [bootstrap] Created output directory: !OUTPUT_DIR!
+    )
+)
+
 echo.
 echo   HiveGuard Bootstrap (Windows CMD)
 echo   ==================================
