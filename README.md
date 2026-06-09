@@ -129,13 +129,15 @@ No prerequisites required — the bootstrap wrappers download Node.js automatica
 3. **Command** — The package command extracts the ZIP, then runs the bootstrap:
    - **Windows (CMD)**: `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && Hiveguard\run.bat --json`
    - **Windows (PowerShell)**: `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && powershell Hiveguard\run.ps1 --json`
-   - **macOS/Linux**: `unzip -qo Hiveguard.zip && chmod +x Hiveguard/run.sh && Hiveguard/run.sh --json`
+   - **macOS/Linux (Tanium)**: `/bin/bash -c "unzip -qo Hiveguard.zip && cd Hiveguard && chmod +x run.sh && ./run.sh --json"`
+   - **macOS/Linux (shell)**: `unzip -qo Hiveguard.zip && chmod +x Hiveguard/run.sh && Hiveguard/run.sh --json`
 
 > **Important:**
 > - The folder name inside the ZIP determines the path after `&&`. If your folder is named `Hiveguard`, the path is `Hiveguard\run.bat`.
 > - Results are written to `./hiveguard-results/` in the current directory by default. Use `--output <dir>` to change.
 > - **Do not** add `> results.json` to the command. The `--output` flag already writes all results (JSON + HTML) to the specified directory.
-> - **macOS note:** ZIPs created on Windows lose the execute permission on `run.sh`. The `chmod +x` step above fixes this. If `unzip` is unavailable, use: `python3 -c "import zipfile; zipfile.ZipFile('Hiveguard.zip').extractall('.')" && chmod +x Hiveguard/run.sh && Hiveguard/run.sh --json`
+> - **macOS note:** ZIPs created on Windows lose the execute permission on `run.sh`. The `chmod +x` step fixes this. If `unzip` is unavailable, use: `python3 -c "import zipfile; zipfile.ZipFile('Hiveguard.zip').extractall('.')" && chmod +x Hiveguard/run.sh && Hiveguard/run.sh --json`
+> - **Tanium macOS note:** Tanium passes the command to `/bin/bash` directly. You **must** use `/bin/bash -c "..."` to wrap the full command, otherwise `unzip` will fail with `cannot execute binary file` (exit code 126).
 
 ### Option B: Direct Copy
 
@@ -157,12 +159,14 @@ No prerequisites required — the bootstrap wrappers download Node.js automatica
 
 | Step | Where | What |
 |---|---|---|
-| Create package | Administration → Content → Packages → New Package | Upload `Hiveguard.zip` |
-| Set command | Package → Command field | `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && powershell Hiveguard\run.ps1 --json` |
+| Create package (Win) | Administration → Content → Packages → New Package | Upload `Hiveguard.zip` |
+| Set command (Win) | Package → Command field | `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && Hiveguard\run.bat --json` |
+| Create package (Mac) | Administration → Content → Packages → New Package | Upload `Hiveguard.zip` |
+| Set command (Mac) | Package → Command field | `/bin/bash -c "unzip -qo Hiveguard.zip && cd Hiveguard && chmod +x run.sh && ./run.sh --json"` |
 | Set timeout | Package → Command Timeout | `600` seconds (extraction + possible Node.js download) |
 | Target endpoints | Interact → Ask question | `Get Computer Name from all machines` |
 | Deploy | Select endpoints → Deploy Action → choose package | Run once or schedule |
-| Collect results | Create sensor to read `hiveguard-results\*.json` in the action directory | Pull back via Interact |
+| Collect results | Create sensor to read `hiveguard-results/*.json` in the action directory | Pull back via Interact |
 
 No admin/root privileges required. Results are written to `./hiveguard-results/` in the current directory by default. If the endpoint already has Node.js 18+, the wrapper uses it directly. Otherwise it downloads a portable binary on first run (~30MB, cached for subsequent scans).
 
