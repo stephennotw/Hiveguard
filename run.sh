@@ -21,6 +21,99 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# --- Self-extraction: if bin/hiveguard.js is missing, try to unzip ---
+if [ ! -f "$SCRIPT_DIR/bin/hiveguard.js" ]; then
+    echo "[bootstrap] bin/hiveguard.js not found — looking for ZIP archive..." >&2
+
+    # Look for the ZIP in SCRIPT_DIR, parent dir, and current working dir
+    ZIP_FILE=""
+    for candidate in \
+        "$SCRIPT_DIR/Hiveguard.zip" "$SCRIPT_DIR/hiveguard.zip" \
+        "$SCRIPT_DIR/../Hiveguard.zip" "$SCRIPT_DIR/../hiveguard.zip" \
+        "./Hiveguard.zip" "./hiveguard.zip"; do
+        if [ -f "$candidate" ]; then
+            ZIP_FILE="$candidate"
+            break
+        fi
+    done
+
+    # Also check for .tar.gz
+    TAR_FILE=""
+    if [ -z "$ZIP_FILE" ]; then
+        for candidate in \
+            "$SCRIPT_DIR/Hiveguard.tar.gz" "$SCRIPT_DIR/hiveguard.tar.gz" \
+            "$SCRIPT_DIR/../Hiveguard.tar.gz" "$SCRIPT_DIR/../hiveguard.tar.gz" \
+            "./Hiveguard.tar.gz" "./hiveguard.tar.gz"; do
+            if [ -f "$candidate" ]; then
+                TAR_FILE="$candidate"
+                break
+            fi
+        done
+    fi
+
+    if [ -n "$ZIP_FILE" ]; then
+        echo "[bootstrap] Found archive: $ZIP_FILE" >&2
+        EXTRACT_TARGET="$SCRIPT_DIR"
+
+        if command -v unzip >/dev/null 2>&1; then
+            echo "[bootstrap] Extracting with unzip..." >&2
+            unzip -qo "$ZIP_FILE" -d "$EXTRACT_TARGET"
+        elif command -v python3 >/dev/null 2>&1; then
+            echo "[bootstrap] unzip not found, extracting with python3..." >&2
+            python3 -c "
+import zipfile, sys
+with zipfile.ZipFile('$ZIP_FILE', 'r') as z:
+    z.extractall('$EXTRACT_TARGET')
+"
+        elif command -v jar >/dev/null 2>&1; then
+            echo "[bootstrap] Extracting with jar..." >&2
+            (cd "$EXTRACT_TARGET" && jar xf "$ZIP_FILE")
+        else
+            echo "[bootstrap] ERROR: Cannot extract ZIP — no unzip, python3, or jar found" >&2
+            echo "            Please extract manually: unzip $ZIP_FILE -d $EXTRACT_TARGET" >&2
+            exit 3
+        fi
+
+        # Handle nested folder: if extraction created Hiveguard/bin/ inside SCRIPT_DIR
+        if [ ! -f "$SCRIPT_DIR/bin/hiveguard.js" ]; then
+            for nested in "$SCRIPT_DIR/Hiveguard" "$SCRIPT_DIR/hiveguard" "$SCRIPT_DIR/Hiveguard-main"; do
+                if [ -f "$nested/bin/hiveguard.js" ]; then
+                    echo "[bootstrap] Moving files from nested folder: $nested" >&2
+                    cp -r "$nested"/* "$SCRIPT_DIR/"
+                    rm -rf "$nested"
+                    break
+                fi
+            done
+        fi
+    elif [ -n "$TAR_FILE" ]; then
+        echo "[bootstrap] Found archive: $TAR_FILE" >&2
+        echo "[bootstrap] Extracting with tar..." >&2
+        tar -xzf "$TAR_FILE" -C "$SCRIPT_DIR"
+
+        # Handle nested folder
+        if [ ! -f "$SCRIPT_DIR/bin/hiveguard.js" ]; then
+            for nested in "$SCRIPT_DIR/Hiveguard" "$SCRIPT_DIR/hiveguard" "$SCRIPT_DIR/Hiveguard-main"; do
+                if [ -f "$nested/bin/hiveguard.js" ]; then
+                    echo "[bootstrap] Moving files from nested folder: $nested" >&2
+                    cp -r "$nested"/* "$SCRIPT_DIR/"
+                    rm -rf "$nested"
+                    break
+                fi
+            done
+        fi
+    fi
+
+    # Final check
+    if [ ! -f "$SCRIPT_DIR/bin/hiveguard.js" ]; then
+        echo "[bootstrap] ERROR: bin/hiveguard.js still not found after extraction." >&2
+        echo "            Ensure the ZIP contains: bin/hiveguard.js, src/, catalogs/" >&2
+        ls -la "$SCRIPT_DIR" >&2 || true
+        exit 3
+    fi
+
+    echo "[bootstrap] Extraction successful." >&2
+fi
+
 NODE_DIR="$SCRIPT_DIR/.node"
 HIVEGUARD_JS="$SCRIPT_DIR/bin/hiveguard.js"
 REQUIRED_MAJOR=18

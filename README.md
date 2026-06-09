@@ -129,12 +129,13 @@ No prerequisites required — the bootstrap wrappers download Node.js automatica
 3. **Command** — The package command extracts the ZIP, then runs the bootstrap:
    - **Windows (CMD)**: `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && Hiveguard\run.bat --json`
    - **Windows (PowerShell)**: `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && powershell Hiveguard\run.ps1 --json`
-   - **macOS/Linux**: `unzip -qo Hiveguard.zip && Hiveguard/run.sh --json`
+   - **macOS/Linux**: `unzip -qo Hiveguard.zip && chmod +x Hiveguard/run.sh && Hiveguard/run.sh --json`
 
 > **Important:**
 > - The folder name inside the ZIP determines the path after `&&`. If your folder is named `Hiveguard`, the path is `Hiveguard\run.bat`.
 > - Results are written to `./hiveguard-results/` in the current directory by default. Use `--output <dir>` to change.
 > - **Do not** add `> results.json` to the command. The `--output` flag already writes all results (JSON + HTML) to the specified directory.
+> - **macOS note:** ZIPs created on Windows lose the execute permission on `run.sh`. The `chmod +x` step above fixes this. If `unzip` is unavailable, use: `python3 -c "import zipfile; zipfile.ZipFile('Hiveguard.zip').extractall('.')" && chmod +x Hiveguard/run.sh && Hiveguard/run.sh --json`
 
 ### Option B: Direct Copy
 
