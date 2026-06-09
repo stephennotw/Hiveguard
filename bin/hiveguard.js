@@ -387,31 +387,32 @@ async function main() {
   // Step 10: Output
   fs.mkdirSync(opts.outputDir, { recursive: true });
 
+  // Always write JSON file to disk
+  const jsonPath = path.join(opts.outputDir, `hiveguard-${systemInfo.hostname}-${Date.now()}.json`);
+  output.writeJson(jsonPath, result);
+
+  // Always write HTML report (unless --no-report)
+  if (!opts.noReport) {
+    const htmlPath = path.join(opts.outputDir, `hiveguard-report-${systemInfo.hostname}.html`);
+    const html = generateReport(result);
+    output.writeHtml(htmlPath, html);
+  }
+
+  // If --json, also print to stdout
   if (opts.json) {
     output.writeStdout(result);
-  } else {
-    // Write JSON
-    const jsonPath = path.join(opts.outputDir, `hiveguard-${systemInfo.hostname}-${Date.now()}.json`);
-    output.writeJson(jsonPath, result);
-
-    // Write HTML report
-    if (!opts.noReport) {
-      const htmlPath = path.join(opts.outputDir, `hiveguard-report-${systemInfo.hostname}.html`);
-      const html = generateReport(result);
-      output.writeHtml(htmlPath, html);
-    }
-
-    // Summary
-    process.stderr.write('\n');
-    process.stderr.write('  ────────────────────────────────────────────\n');
-    process.stderr.write(`  ✅ Scan complete in ${elapsed}s\n`);
-    process.stderr.write(`     📦 ${flatPackages.length} components inventoried\n`);
-    process.stderr.write(`     🛡️  ${catalogs.length} threat catalogs (${totalVersions} known-bad versions)\n`);
-    process.stderr.write(`     ${threatMatches.length > 0 ? '🚨' : '✅'} ${threatMatches.length} threat matches\n`);
-    process.stderr.write(`     ⚠️  ${allFindings.length} findings (${allFindings.filter(f => f.severity === 'critical').length} critical, ${allFindings.filter(f => f.severity === 'high').length} high)\n`);
-    process.stderr.write(`     📁 Results: ${opts.outputDir}\n`);
-    process.stderr.write('  ────────────────────────────────────────────\n\n');
   }
+
+  // Summary to stderr
+  process.stderr.write('\n');
+  process.stderr.write('  ────────────────────────────────────────────\n');
+  process.stderr.write(`  ✅ Scan complete in ${elapsed}s\n`);
+  process.stderr.write(`     📦 ${flatPackages.length} components inventoried\n`);
+  process.stderr.write(`     🛡️  ${catalogs.length} threat catalogs (${totalVersions} known-bad versions)\n`);
+  process.stderr.write(`     ${threatMatches.length > 0 ? '🚨' : '✅'} ${threatMatches.length} threat matches\n`);
+  process.stderr.write(`     ⚠️  ${allFindings.length} findings (${allFindings.filter(f => f.severity === 'critical').length} critical, ${allFindings.filter(f => f.severity === 'high').length} high)\n`);
+  process.stderr.write(`     📁 Results: ${opts.outputDir}\n`);
+  process.stderr.write('  ────────────────────────────────────────────\n\n');
 
   // Exit code
   if (threatMatches.length > 0) process.exit(2);

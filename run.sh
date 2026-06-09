@@ -6,6 +6,20 @@
 
 set -euo pipefail
 
+# --- Logging: write a debug log file for Tanium/remote troubleshooting ---
+SCRIPT_DIR_EARLY="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+BOOTSTRAP_LOG="$SCRIPT_DIR_EARLY/hiveguard-bootstrap.log"
+
+log() { echo "$1"; echo "$1" >> "$BOOTSTRAP_LOG"; }
+
+trap 'log "[bootstrap] FATAL: script failed at line $LINENO (exit code $?)"' ERR
+
+log "[bootstrap] Started at $(date)"
+log "[bootstrap] PWD: $(pwd)"
+log "[bootstrap] Script: $0"
+log "[bootstrap] Args: $*"
+log "[bootstrap] OS: $(uname -a)"
+
 # Pre-create output directory if --output is specified
 PREV_ARG=""
 for arg in "$@"; do
@@ -131,11 +145,13 @@ find_system_node() {
         local major
         major=$(get_node_major "$(command -v node)")
         if [ "$major" -ge "$REQUIRED_MAJOR" ]; then
-            echo "[bootstrap] Using system Node.js ($(command -v node), v$major)" >&2
+            log "[bootstrap] Using system Node.js ($(command -v node), v$major)"
             command -v node
             return 0
         fi
-        echo "[bootstrap] System Node.js too old (v$major, need >=$REQUIRED_MAJOR)" >&2
+        log "[bootstrap] System Node.js too old (v$major, need >=$REQUIRED_MAJOR)"
+    else
+        log "[bootstrap] No system Node.js found"
     fi
     return 1
 }
@@ -184,26 +200,28 @@ install_portable_node() {
     local tmp_tar="/tmp/${tarball}"
     local extract_dir="/tmp/node-${NODE_VERSION}-${os_name}-${arch_name}"
 
-    echo "[bootstrap] Downloading Node.js $NODE_VERSION ($os_name-$arch_name)..." >&2
-    echo "            $url" >&2
+    log "[bootstrap] Downloading Node.js $NODE_VERSION ($os_name-$arch_name)..."
+    log "            $url"
 
     if command -v curl >/dev/null 2>&1; then
+        log "[bootstrap] Using curl to download..."
         curl -fsSL "$url" -o "$tmp_tar" || {
-            echo "[bootstrap] ERROR: Failed to download Node.js" >&2
-            echo "            Install Node.js 18+ manually: https://nodejs.org" >&2
+            log "[bootstrap] ERROR: Failed to download Node.js (curl exit $?)"
+            log "            Install Node.js 18+ manually: https://nodejs.org"
             exit 3
         }
     elif command -v wget >/dev/null 2>&1; then
+        log "[bootstrap] Using wget to download..."
         wget -q "$url" -O "$tmp_tar" || {
-            echo "[bootstrap] ERROR: Failed to download Node.js" >&2
+            log "[bootstrap] ERROR: Failed to download Node.js (wget exit $?)"
             exit 3
         }
     else
-        echo "[bootstrap] ERROR: Neither curl nor wget found" >&2
+        log "[bootstrap] ERROR: Neither curl nor wget found"
         exit 3
     fi
 
-    echo "[bootstrap] Extracting..." >&2
+    log "[bootstrap] Download complete ($(ls -lh "$tmp_tar" 2>/dev/null | awk '{print $5}')). Extracting..."
     rm -rf "$extract_dir"
     mkdir -p "$NODE_DIR"
     tar -xzf "$tmp_tar" -C /tmp
@@ -217,15 +235,15 @@ install_portable_node() {
 
     local major
     major=$(get_node_major "$node_exe")
-    echo "[bootstrap] Node.js $NODE_VERSION installed to .node/node" >&2
+    log "[bootstrap] Node.js $NODE_VERSION installed to .node/node"
     echo "$node_exe"
 }
 
 # --- Main ---
-echo "" >&2
-echo "  HiveGuard Bootstrap ($(uname -s))" >&2
-echo "  =============================" >&2
-echo "" >&2
+log ""
+log "  HiveGuard Bootstrap ($(uname -s))"
+log "  ============================="
+log ""
 
 # 1. Try system node
 NODE_EXE=""
@@ -233,11 +251,16 @@ NODE_EXE=$(find_system_node) || true
 
 # 2. Fall back to portable node
 if [ -z "$NODE_EXE" ]; then
+    log "[bootstrap] No usable system Node.js, installing portable..."
     NODE_EXE=$(install_portable_node)
 fi
 
-# 3. Run HiveGuard
-echo "[bootstrap] Starting HiveGuard scan..." >&2
-echo "" >&2
+log "[bootstrap] NODE_EXE=$NODE_EXE"
+log "[bootstrap] HIVEGUARD_JS=$HIVEGUARD_JS"
+log "[bootstrap] Starting HiveGuard scan..."
+log ""
 
-exec "$NODE_EXE" "$HIVEGUARD_JS" "$@"
+"$NODE_EXE" "$HIVEGUARD_JS" "$@"
+EXIT_CODE=$?
+log "[bootstrap] HiveGuard exited with code $EXIT_CODE"
+exit $EXIT_CODE
