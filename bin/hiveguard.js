@@ -450,10 +450,14 @@ function buildFlatPackageList(scanResults, userHomes) {
 
   // pypi
   for (const pkg of (scanResults.pypi.packages || [])) {
+    // Derive a short project name from the source_dir path
+    const srcDir = pkg.source_dir || '';
+    const shortProject = srcDir.split(/[/\\]/).filter(Boolean).slice(-2).join('/') || pkg.source_type || 'pypi';
     packages.push({
       ecosystem: 'pypi', name: pkg.name, version: pkg.version,
-      user: resolveUser(pkg.source_dir, userHomes),
-      project: pkg.source_dir || '', source: pkg.source_type || 'venv',
+      user: resolveUser(srcDir, userHomes),
+      project: shortProject, source: srcDir,
+      sourceType: pkg.source_type,
       installer: pkg.installer, confidence: pkg.confidence || 'high',
     });
   }

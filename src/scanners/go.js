@@ -17,11 +17,19 @@ function scan(platform, opts = {}, preFoundFiles) {
   const projects = [];
 
   for (const sumFile of goSumFiles) {
+    // Skip Go SDK internal go.sum files (not user projects)
+    const normalized = sumFile.replace(/\\/g, '/');
+    if (/\/(usr\/local\/go|sdk\/go[\d.]+)\//i.test(normalized)) {
+      logger.debug(SCANNER_ID, `Skipping Go SDK internal: ${sumFile}`);
+      continue;
+    }
+
     const raw = readFileSafe(sumFile);
     if (!raw) continue;
 
     const projectDir = path.dirname(sumFile);
-    const projectName = path.basename(projectDir);
+    const segments = projectDir.split(/[/\\]/).filter(Boolean);
+    const projectName = segments.length >= 2 ? segments.slice(-2).join('/') : segments.pop() || 'unknown';
     const dependencies = [];
     const seen = new Set();
 

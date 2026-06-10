@@ -180,6 +180,8 @@ hiveguard-results/
 
 Note: Threat intel catalogs are loaded into memory at runtime — no disk cache required.
 
+> **📖 For a complete guide to understanding results — findings, severity scoring, dependencies, field reference, and examples — see [`docs/RESULTS-GUIDE.md`](docs/RESULTS-GUIDE.md).**
+
 ## Scanners
 
 | Scanner | What it finds | Lockfile / Source |

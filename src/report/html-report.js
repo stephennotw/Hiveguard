@@ -131,9 +131,9 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
     <div class="nav-item" onclick="showPanel('search')">🔍 All Packages<span class="badge">${packages.length.toLocaleString()}</span></div>
     <div class="nav-item" onclick="showPanel('threats')">🛡️ Threat Intel${threatMatches.length > 0 ? `<span class="badge threat">${threatMatches.length}</span>` : '<span class="badge">0</span>'}</div>
     <div class="nav-item" onclick="showPanel('findings')">⚠️ Findings<span class="badge${critCount > 0 ? ' critical' : ''}">${findings.length}</span></div>
-    <div class="nav-item" onclick="showPanel('npm')">📦 npm<span class="badge">${summary.ecosystems.npm_projects}p</span></div>
+    <div class="nav-item" onclick="showPanel('npm')">📦 npm<span class="badge">${summary.ecosystems.npm_projects} projects</span></div>
     <div class="nav-item" onclick="showPanel('pypi')">🐍 Python<span class="badge">${summary.ecosystems.pypi_packages}</span></div>
-    <div class="nav-item" onclick="showPanel('go')">🔷 Go<span class="badge">${summary.ecosystems.go_projects}p</span></div>
+    <div class="nav-item" onclick="showPanel('go')">🔷 Go<span class="badge">${summary.ecosystems.go_projects} projects</span></div>
     <div class="nav-item" onclick="showPanel('extensions')">🔌 Extensions<span class="badge">${summary.ecosystems.editor_extensions + summary.ecosystems.browser_extensions}</span></div>
     <div class="nav-item" onclick="showPanel('mcp')">🔗 MCP<span class="badge">${summary.ecosystems.mcp_servers}</span></div>
   </div></div>`;

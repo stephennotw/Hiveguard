@@ -71,6 +71,7 @@ function enumerateUserHomes(platformId) {
     'default', 'default user', 'defaultuser0', 'public', 'all users',
     'defaultaccount', 'guest', 'defaultapppool', 'networkservice',
     'localservice', 'systemprofile', '.net v4.5', '.net v4.5 classic',
+    'shared', 'library',
   ]);
 
   let usersBase;
