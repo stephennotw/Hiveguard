@@ -48,6 +48,7 @@ const mcpScanner = require(path.join(SRC_ROOT, 'scanners', 'mcp-configs'));
 const secretsScanner = require(path.join(SRC_ROOT, 'scanners', 'secrets-hygiene'));
 const lifecycleScanner = require(path.join(SRC_ROOT, 'scanners', 'lifecycle-scripts'));
 const gitHooksScanner = require(path.join(SRC_ROOT, 'scanners', 'git-hooks'));
+const aiInstructionsScanner = require(path.join(SRC_ROOT, 'scanners', 'ai-instructions'));
 
 // Threat intel
 const { loadThreatIntel } = require(path.join(SRC_ROOT, 'threat-intel', 'sync'));
@@ -233,6 +234,7 @@ async function main() {
 
   scanResults.lifecycle_scripts = timedScan('lifecycle', () => lifecycleScanner.scan(platform, scanOpts, scanResults.npm.projects));
   scanResults.git_hooks = timedScan('git-hooks', () => gitHooksScanner.scan(platform, scanOpts));
+  scanResults.ai_instructions = timedScan('ai-instruct', () => aiInstructionsScanner.scan(platform, scanOpts));
 
   // Discovered user profiles for attributing findings
   const userHomes = platform.userHomes || [];
@@ -388,6 +390,20 @@ async function main() {
     }
   }
 
+  // AI instruction file findings
+  if (scanResults.ai_instructions) {
+    for (const f of scanResults.ai_instructions.findings) {
+      allFindings.push({
+        type: 'suspicious_ai_instruction',
+        user: resolveUser(f.path, userHomes),
+        ecosystem: 'ai-tools',
+        package: f.tool,
+        version: '',
+        ...f,
+      });
+    }
+  }
+
   // Sort by severity
   const sevOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   allFindings.sort((a, b) => (sevOrder[a.severity] ?? 5) - (sevOrder[b.severity] ?? 5));
@@ -438,6 +454,8 @@ async function main() {
         lifecycle_scripts_findings: scanResults.lifecycle_scripts.total_findings,
         git_hooks_repos: scanResults.git_hooks.repos_scanned,
         git_hooks_suspicious: scanResults.git_hooks.suspicious,
+        ai_instruction_files: scanResults.ai_instructions.files_found,
+        ai_instruction_suspicious: scanResults.ai_instructions.suspicious,
       },
     },
     findings: allFindings,
