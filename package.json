@@ -7,7 +7,8 @@
     "hiveguard": "./bin/hiveguard.js"
   },
   "scripts": {
-    "scan": "node bin/hiveguard.js"
+    "scan": "node bin/hiveguard.js",
+    "test": "node --test test/*.test.js"
   },
   "keywords": [
     "supply-chain",
