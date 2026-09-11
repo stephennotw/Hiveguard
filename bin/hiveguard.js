@@ -50,6 +50,7 @@ const secretsScanner = require(path.join(SRC_ROOT, 'scanners', 'secrets-hygiene'
 // Threat intel
 const { loadThreatIntel } = require(path.join(SRC_ROOT, 'threat-intel', 'sync'));
 const { buildIndex, matchPackages } = require(path.join(SRC_ROOT, 'threat-intel', 'matcher'));
+const { queryOsv } = require(path.join(SRC_ROOT, 'threat-intel', 'osv'));
 
 // CVE
 const { checkKnownVulns } = require(path.join(SRC_ROOT, 'cve', 'known-vulns'));
@@ -264,8 +265,36 @@ async function main() {
   const flatPackages = buildFlatPackageList(scanResults, userHomes);
   logger.info('core', `Total components inventoried: ${flatPackages.length}`);
 
-  // Step 6: Threat intel matching
+  // Step 6: Threat intel matching (Bumblebee catalogs)
   const threatMatches = matchPackages(flatPackages, threatIndex);
+
+  // Step 6b: OpenSSF malicious package check via OSV.dev
+  let osvMatches = [];
+  if (!opts.offline) {
+    try {
+      osvMatches = await queryOsv(flatPackages, { timeout: 20000 });
+    } catch (e) {
+      logger.warn('core', `OSV.dev query failed (non-fatal): ${e.message}`);
+    }
+  }
+
+  // Merge OSV matches, dedup against Bumblebee hits
+  const bumblebeeKeys = new Set(threatMatches.map(m =>
+    `${(m.ecosystem || '').toLowerCase()}:${(m.name || '').toLowerCase()}:${m.version}`
+  ));
+  for (const match of osvMatches) {
+    const key = `${(match.ecosystem || '').toLowerCase()}:${(match.name || '').toLowerCase()}:${match.version}`;
+    if (bumblebeeKeys.has(key)) {
+      const existing = threatMatches.find(m =>
+        (m.ecosystem || '').toLowerCase() === (match.ecosystem || '').toLowerCase()
+        && (m.name || '').toLowerCase() === (match.name || '').toLowerCase()
+        && m.version === match.version
+      );
+      if (existing) existing.threats.push(...match.threats);
+    } else {
+      threatMatches.push(match);
+    }
+  }
 
   // Step 7: Known CVE checks
   const cveFindings = checkKnownVulns(flatPackages);
@@ -349,6 +378,7 @@ async function main() {
       last_sync: intelResult.lastSync,
       custom_catalogs: intelResult.customCount,
       custom_dirs: intelResult.customDirs,
+      osv_matches: osvMatches.length,
       matches: threatMatches.length,
     },
     summary: {
@@ -408,7 +438,7 @@ async function main() {
   process.stderr.write('  ────────────────────────────────────────────\n');
   process.stderr.write(`  ✅ Scan complete in ${elapsed}s\n`);
   process.stderr.write(`     📦 ${flatPackages.length} components inventoried\n`);
-  process.stderr.write(`     🛡️  ${catalogs.length} threat catalogs (${totalVersions} known-bad versions)\n`);
+  process.stderr.write(`     🛡️  ${catalogs.length} threat catalogs (${totalVersions} known-bad versions)${osvMatches.length > 0 ? ` + ${osvMatches.length} OSV` : ''}\n`);
   process.stderr.write(`     ${threatMatches.length > 0 ? '🚨' : '✅'} ${threatMatches.length} threat matches\n`);
   process.stderr.write(`     ⚠️  ${allFindings.length} findings (${allFindings.filter(f => f.severity === 'critical').length} critical, ${allFindings.filter(f => f.severity === 'high').length} high)\n`);
   process.stderr.write(`     📁 Results: ${opts.outputDir}\n`);
