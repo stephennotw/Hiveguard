@@ -190,18 +190,26 @@ function loadCatalogsFromDir(dir, sourceTag) {
 
 // ── HTTP helpers ──
 
-function httpsGet(url, timeout = 15000) {
+function httpsGet(url, timeout = 15000, _redirectCount = 0) {
+  if (_redirectCount > 5) {
+    return Promise.reject(new Error('Too many redirects'));
+  }
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    const headers = { 'User-Agent': 'hiveguard/1.0' };
+    if (token && parsed.hostname === 'api.github.com') {
+      headers['Authorization'] = `token ${token}`;
+    }
     const opts = {
       hostname: parsed.hostname,
       path: parsed.pathname + parsed.search,
-      headers: { 'User-Agent': 'hiveguard/1.0' },
+      headers,
       timeout,
     };
     const req = https.get(opts, (res) => {
       if (res.statusCode === 301 || res.statusCode === 302) {
-        return httpsGet(res.headers.location, timeout).then(resolve).catch(reject);
+        return httpsGet(res.headers.location, timeout, _redirectCount + 1).then(resolve).catch(reject);
       }
       if (res.statusCode !== 200) {
         let body = '';

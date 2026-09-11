@@ -8,8 +8,18 @@ const logger = require('./logger');
  * Read-only filesystem helpers. Never writes, never executes.
  */
 
-function readFileSafe(filePath) {
+function readFileSafe(filePath, opts = {}) {
   try {
+    if (opts.maxBytes) {
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        const buf = Buffer.alloc(opts.maxBytes);
+        const bytesRead = fs.readSync(fd, buf, 0, opts.maxBytes, 0);
+        return buf.slice(0, bytesRead).toString('utf8');
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
     return fs.readFileSync(filePath, 'utf8');
   } catch (e) {
     logger.debug('fs-safe', `Cannot read ${filePath}: ${e.code || e.message}`);

@@ -4,7 +4,7 @@
  * Generate a self-contained interactive HTML report from scan results.
  */
 function generateReport(result) {
-  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const meta = result.meta;
   const ti = result.threat_intel;
   const summary = result.summary;

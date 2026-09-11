@@ -9,6 +9,10 @@ const logger = require('../utils/logger');
  *
  * Format: { ecosystem, package, check(version) -> finding|null }
  */
+function parseVersion(v) {
+  return String(v).split('.').map(s => parseInt(s) || 0);
+}
+
 const RULES = [
   // ── Python / PyPI ──
   {
@@ -44,7 +48,7 @@ const RULES = [
   {
     ecosystem: 'pypi', package: 'jinja2',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] === 3 && parts[1] === 1 && (parts[2] || 0) < 4) return {
         severity: 'medium', cve: 'CVE-2024-34064',
         text: `Jinja2 ${v} — XSS via xmlattr filter. Upgrade to ≥3.1.4.`,
@@ -65,7 +69,7 @@ const RULES = [
   {
     ecosystem: 'pypi', package: 'requests',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] === 2 && parts[1] < 32) return {
         severity: 'medium', cve: 'CVE-2024-35195',
         text: `requests ${v} — session cookies leak on cross-origin redirects. Upgrade to ≥2.32.0.`,
@@ -76,12 +80,12 @@ const RULES = [
   {
     ecosystem: 'pypi', package: 'urllib3',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] === 2 && parts[1] === 0 && (parts[2] || 0) < 7) return {
         severity: 'medium', cve: 'CVE-2023-45803',
         text: `urllib3 ${v} — request body leak on redirect. Upgrade to ≥2.0.7.`,
       };
-      if (parts[0] === 1 && parts[1] < 26 || (parts[1] === 26 && (parts[2] || 0) < 18)) return {
+      if (parts[0] === 1 && (parts[1] < 26 || (parts[1] === 26 && (parts[2] || 0) < 18))) return {
         severity: 'medium', cve: 'CVE-2023-45803',
         text: `urllib3 ${v} — request body leak on redirect. Upgrade to ≥1.26.18 or 2.0.7.`,
       };
@@ -91,7 +95,7 @@ const RULES = [
   {
     ecosystem: 'pypi', package: 'cryptography',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] < 42) return {
         severity: 'high', cve: 'CVE-2024-26130',
         text: `cryptography ${v} — NULL pointer dereference in PKCS12 parsing. Upgrade to ≥42.0.4.`,
@@ -116,8 +120,8 @@ const RULES = [
   {
     ecosystem: 'npm', package: 'express',
     check(v) {
-      const parts = v.split('.').map(Number);
-      if (parts[0] === 4 && parts[1] < 20) return {
+      const parts = parseVersion(v);
+      if (parts[0] < 4 || (parts[0] === 4 && parts[1] < 20)) return {
         severity: 'medium', cve: 'CVE-2024-29041',
         text: `express ${v} — open redirect vulnerability. Upgrade to ≥4.20.0.`,
       };
@@ -127,7 +131,7 @@ const RULES = [
   {
     ecosystem: 'npm', package: 'axios',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] === 1 && parts[1] < 7) return {
         severity: 'high', cve: 'CVE-2024-39338',
         text: `axios ${v} — SSRF via unexpected protocol in server-side requests. Upgrade to ≥1.7.4.`,
@@ -138,7 +142,7 @@ const RULES = [
   {
     ecosystem: 'npm', package: 'jsonwebtoken',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] < 9) return {
         severity: 'high', cve: 'CVE-2022-23529',
         text: `jsonwebtoken ${v} — insecure key handling allows forgery. Upgrade to ≥9.0.0.`,
@@ -149,7 +153,7 @@ const RULES = [
   {
     ecosystem: 'npm', package: 'semver',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] < 7 || (parts[0] === 7 && parts[1] < 5) || (parts[0] === 7 && parts[1] === 5 && (parts[2]||0) < 2)) return {
         severity: 'medium', cve: 'CVE-2022-25883',
         text: `semver ${v} — ReDoS via crafted version strings. Upgrade to ≥7.5.2.`,
@@ -160,7 +164,7 @@ const RULES = [
   {
     ecosystem: 'npm', package: 'lodash',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] < 4 || (parts[0] === 4 && parts[1] < 17) || (parts[0] === 4 && parts[1] === 17 && (parts[2]||0) < 21)) return {
         severity: 'high', cve: 'CVE-2021-23337',
         text: `lodash ${v} — command injection via template(). Upgrade to ≥4.17.21.`,
@@ -171,7 +175,7 @@ const RULES = [
   {
     ecosystem: 'npm', package: 'tar',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] < 6 || (parts[0] === 6 && parts[1] < 2)) return {
         severity: 'high', cve: 'CVE-2024-28863',
         text: `tar ${v} — denial of service via crafted tar files. Upgrade to ≥6.2.1.`,
@@ -182,8 +186,8 @@ const RULES = [
   {
     ecosystem: 'npm', package: 'postcss',
     check(v) {
-      const parts = v.split('.').map(Number);
-      if (parts[0] === 8 && parts[1] < 4 || (parts[1] === 4 && (parts[2]||0) < 31)) return {
+      const parts = parseVersion(v);
+      if (parts[0] === 8 && (parts[1] < 4 || (parts[1] === 4 && (parts[2]||0) < 31))) return {
         severity: 'medium', cve: 'CVE-2023-44270',
         text: `postcss ${v} — line return parsing issue. Upgrade to ≥8.4.31.`,
       };
@@ -195,7 +199,7 @@ const RULES = [
   {
     ecosystem: 'go', package: 'golang.org/x/crypto',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] === 0 && parts[1] < 17) return {
         severity: 'high', cve: 'CVE-2023-48795',
         text: `x/crypto ${v} — Terrapin SSH prefix truncation attack. Upgrade to ≥0.17.0.`,
@@ -206,7 +210,7 @@ const RULES = [
   {
     ecosystem: 'go', package: 'golang.org/x/net',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] === 0 && parts[1] < 23) return {
         severity: 'high', cve: 'CVE-2023-45288',
         text: `x/net ${v} — HTTP/2 rapid reset DoS. Upgrade to ≥0.23.0.`,
@@ -219,7 +223,7 @@ const RULES = [
   {
     ecosystem: 'rubygems', package: 'rack',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] < 3 || (parts[0] === 3 && parts[1] === 0 && (parts[2]||0) < 10)) return {
         severity: 'medium', cve: 'CVE-2024-26146',
         text: `rack ${v} — ReDoS in header parsing. Upgrade to ≥3.0.10.`,
@@ -232,7 +236,7 @@ const RULES = [
   {
     ecosystem: 'composer', package: 'guzzlehttp/guzzle',
     check(v) {
-      const parts = v.split('.').map(Number);
+      const parts = parseVersion(v);
       if (parts[0] === 7 && parts[1] < 8) return {
         severity: 'high', cve: 'CVE-2023-29197',
         text: `guzzle ${v} — HTTP header injection. Upgrade to ≥7.8.0.`,

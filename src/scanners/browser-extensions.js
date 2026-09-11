@@ -34,8 +34,16 @@ function scan(platform) {
         const versions = readdirSafe(extIdDir).filter(v => !v.startsWith('.'));
         if (versions.length === 0) continue;
 
-        // Sort versions, pick latest
-        const latestVer = versions.sort().pop();
+        // Sort versions numerically by segments, pick latest
+        const latestVer = versions.sort((a, b) => {
+          const pa = a.split('.').map(s => parseInt(s) || 0);
+          const pb = b.split('.').map(s => parseInt(s) || 0);
+          for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+            const diff = (pa[i] || 0) - (pb[i] || 0);
+            if (diff !== 0) return diff;
+          }
+          return 0;
+        }).pop();
         const manifestPath = path.join(extIdDir, latestVer, 'manifest.json');
         const manifest = readJsonSafe(manifestPath);
         if (!manifest) continue;

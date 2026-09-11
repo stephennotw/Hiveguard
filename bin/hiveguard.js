@@ -97,7 +97,7 @@ function parseArgs() {
         opts.noSecrets = true;
         break;
       case '--max-depth':
-        opts.maxDepth = parseInt(args[++i]) || 6;
+        opts.maxDepth = parseInt(args[++i]) || 4;
         break;
       case '--verbose': case '-v':
         opts.verbose = true;
