@@ -46,6 +46,8 @@ const editorExtScanner = require(path.join(SRC_ROOT, 'scanners', 'editor-extensi
 const browserExtScanner = require(path.join(SRC_ROOT, 'scanners', 'browser-extensions'));
 const mcpScanner = require(path.join(SRC_ROOT, 'scanners', 'mcp-configs'));
 const secretsScanner = require(path.join(SRC_ROOT, 'scanners', 'secrets-hygiene'));
+const lifecycleScanner = require(path.join(SRC_ROOT, 'scanners', 'lifecycle-scripts'));
+const gitHooksScanner = require(path.join(SRC_ROOT, 'scanners', 'git-hooks'));
 
 // Threat intel
 const { loadThreatIntel } = require(path.join(SRC_ROOT, 'threat-intel', 'sync'));
@@ -229,6 +231,9 @@ async function main() {
     scanResults.secrets_hygiene = timedScan('secrets', () => secretsScanner.scan(platform, scanOpts));
   }
 
+  scanResults.lifecycle_scripts = timedScan('lifecycle', () => lifecycleScanner.scan(platform, scanOpts, scanResults.npm.projects));
+  scanResults.git_hooks = timedScan('git-hooks', () => gitHooksScanner.scan(platform, scanOpts));
+
   // Discovered user profiles for attributing findings
   const userHomes = platform.userHomes || [];
 
@@ -354,6 +359,35 @@ async function main() {
     }
   }
 
+  // Lifecycle script findings
+  if (scanResults.lifecycle_scripts) {
+    for (const f of scanResults.lifecycle_scripts.findings) {
+      allFindings.push({
+        type: 'suspicious_lifecycle_script',
+        user: resolveUser(f.path, userHomes),
+        ecosystem: f.ecosystem || 'npm',
+        package: f.package,
+        version: '',
+        ...f,
+      });
+    }
+  }
+
+  // Git hook findings (only suspicious, not info-level)
+  if (scanResults.git_hooks) {
+    for (const f of scanResults.git_hooks.findings) {
+      if (f.severity === 'info') continue;
+      allFindings.push({
+        type: 'suspicious_git_hook',
+        user: resolveUser(f.path, userHomes),
+        ecosystem: 'git',
+        package: f.hook,
+        version: '',
+        ...f,
+      });
+    }
+  }
+
   // Sort by severity
   const sevOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   allFindings.sort((a, b) => (sevOrder[a.severity] ?? 5) - (sevOrder[b.severity] ?? 5));
@@ -400,6 +434,10 @@ async function main() {
         editor_extensions: scanResults.editor_extensions.total,
         browser_extensions: scanResults.browser_extensions.total,
         mcp_servers: scanResults.mcp_configs.total_servers,
+        lifecycle_scripts_scanned: scanResults.lifecycle_scripts.packages_scanned,
+        lifecycle_scripts_findings: scanResults.lifecycle_scripts.total_findings,
+        git_hooks_repos: scanResults.git_hooks.repos_scanned,
+        git_hooks_suspicious: scanResults.git_hooks.suspicious,
       },
     },
     findings: allFindings,

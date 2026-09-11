@@ -93,8 +93,13 @@ function matchPackages(packages, threatIndex) {
   return matches;
 }
 
+function normalizeVersion(version) {
+  if (!version) return '';
+  return version.replace(/^v/, '');
+}
+
 function buildKey(ecosystem, packageName, version) {
-  return `${(ecosystem || '').toLowerCase()}:${(packageName || '').toLowerCase()}:${version || ''}`;
+  return `${(ecosystem || '').toLowerCase()}:${(packageName || '').toLowerCase()}:${normalizeVersion(version)}`;
 }
 
 module.exports = { buildIndex, matchPackages };

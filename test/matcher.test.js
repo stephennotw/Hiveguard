@@ -98,5 +98,49 @@ describe('threat-intel matcher', () => {
       const matches = matchPackages([], threatIndex);
       assert.equal(matches.length, 0);
     });
+
+    it('matches versions with v-prefix against catalog without v-prefix', () => {
+      const goCatalogs = new Map([
+        ['go-malware.json', {
+          _comment: 'Go Malware',
+          entries: [{
+            ecosystem: 'go',
+            package: 'github.com/evil/pkg',
+            name: 'go backdoor',
+            versions: ['0.17.0'],
+          }],
+        }],
+      ]);
+      const { threatIndex } = buildIndex(goCatalogs);
+      const matches = matchPackages([
+        { ecosystem: 'go', name: 'github.com/evil/pkg', version: 'v0.17.0' },
+      ], threatIndex);
+      assert.equal(matches.length, 1);
+    });
+
+    it('matches catalog entries with v-prefix against scanned packages without', () => {
+      const goCatalogs = new Map([
+        ['go-malware.json', {
+          entries: [{
+            ecosystem: 'go',
+            package: 'github.com/evil/pkg',
+            versions: ['v1.2.3'],
+          }],
+        }],
+      ]);
+      const { threatIndex } = buildIndex(goCatalogs);
+      const matches = matchPackages([
+        { ecosystem: 'go', name: 'github.com/evil/pkg', version: '1.2.3' },
+      ], threatIndex);
+      assert.equal(matches.length, 1);
+    });
+
+    it('still matches exact versions without v-prefix', () => {
+      const { threatIndex } = buildIndex(sampleCatalogs);
+      const matches = matchPackages([
+        { ecosystem: 'npm', name: 'event-stream', version: '3.3.6' },
+      ], threatIndex);
+      assert.equal(matches.length, 1);
+    });
   });
 });
