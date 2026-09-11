@@ -54,6 +54,7 @@ const aiInstructionsScanner = require(path.join(SRC_ROOT, 'scanners', 'ai-instru
 const { loadThreatIntel } = require(path.join(SRC_ROOT, 'threat-intel', 'sync'));
 const { buildIndex, matchPackages } = require(path.join(SRC_ROOT, 'threat-intel', 'matcher'));
 const { queryOsv } = require(path.join(SRC_ROOT, 'threat-intel', 'osv'));
+const { queryGhsa } = require(path.join(SRC_ROOT, 'threat-intel', 'ghsa'));
 
 // CVE
 const { checkKnownVulns } = require(path.join(SRC_ROOT, 'cve', 'known-vulns'));
@@ -303,6 +304,34 @@ async function main() {
     }
   }
 
+  // Step 6c: GitHub Advisory Database malware check
+  let ghsaMatches = [];
+  if (!opts.offline) {
+    try {
+      ghsaMatches = await queryGhsa(flatPackages, { timeout: 20000 });
+    } catch (e) {
+      logger.warn('core', `GitHub Advisory DB query failed (non-fatal): ${e.message}`);
+    }
+  }
+
+  // Merge GHSA matches, dedup against existing hits
+  const existingKeys = new Set(threatMatches.map(m =>
+    `${(m.ecosystem || '').toLowerCase()}:${(m.name || '').toLowerCase()}:${m.version}`
+  ));
+  for (const match of ghsaMatches) {
+    const key = `${(match.ecosystem || '').toLowerCase()}:${(match.name || '').toLowerCase()}:${match.version}`;
+    if (existingKeys.has(key)) {
+      const existing = threatMatches.find(m =>
+        (m.ecosystem || '').toLowerCase() === (match.ecosystem || '').toLowerCase()
+        && (m.name || '').toLowerCase() === (match.name || '').toLowerCase()
+        && m.version === match.version
+      );
+      if (existing) existing.threats.push(...match.threats);
+    } else {
+      threatMatches.push(match);
+    }
+  }
+
   // Step 7: Known CVE checks
   const cveFindings = checkKnownVulns(flatPackages);
 
@@ -429,6 +458,7 @@ async function main() {
       custom_catalogs: intelResult.customCount,
       custom_dirs: intelResult.customDirs,
       osv_matches: osvMatches.length,
+      ghsa_matches: ghsaMatches.length,
       matches: threatMatches.length,
     },
     summary: {
