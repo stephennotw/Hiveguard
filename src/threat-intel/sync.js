@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const logger = require('../utils/logger');
+const { agentFor, USER_AGENT } = require('./http');
 
 const GITHUB_API = 'https://api.github.com/repos/perplexityai/bumblebee/contents/threat_intel';
 const RAW_BASE = 'https://raw.githubusercontent.com/perplexityai/bumblebee/main/threat_intel/';
@@ -30,6 +31,7 @@ async function loadThreatIntel(opts = {}) {
   let lastSync = null;
   let newCampaigns = [];
   let updatedCampaigns = [];
+  let liveStatus = { status: 'skipped', error: 'offline mode' };
 
   if (!offline) {
     // Try live fetch into memory
@@ -37,11 +39,13 @@ async function loadThreatIntel(opts = {}) {
     if (liveResult.success) {
       primaryCatalogs = liveResult.catalogs;
       source = 'live';
+      liveStatus = { status: 'ok', error: null };
       lastSync = new Date().toISOString();
       newCampaigns = liveResult.newCampaigns || [];
       updatedCampaigns = liveResult.updatedCampaigns || [];
       logger.info('threat-intel', `Live fetch: ${primaryCatalogs.size} catalogs loaded into memory`);
     } else {
+      liveStatus = { status: 'failed', error: String(liveResult.error || 'unknown error').replace(/\s+/g, ' ').slice(0, 200) };
       logger.warn('threat-intel', `Live fetch failed: ${liveResult.error} — falling back to baseline`);
     }
   } else {
@@ -105,6 +109,7 @@ async function loadThreatIntel(opts = {}) {
     updatedCampaigns,
     customDirs: customSources,
     customCount,
+    liveStatus,
   };
 }
 
@@ -197,7 +202,7 @@ function httpsGet(url, timeout = 15000, _redirectCount = 0) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-    const headers = { 'User-Agent': 'hiveguard/1.0' };
+    const headers = { 'User-Agent': USER_AGENT };
     if (token && parsed.hostname === 'api.github.com') {
       headers['Authorization'] = `token ${token}`;
     }
@@ -206,6 +211,7 @@ function httpsGet(url, timeout = 15000, _redirectCount = 0) {
       path: parsed.pathname + parsed.search,
       headers,
       timeout,
+      agent: agentFor(url),
     };
     const req = https.get(opts, (res) => {
       if (res.statusCode === 301 || res.statusCode === 302) {

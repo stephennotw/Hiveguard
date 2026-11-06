@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { readFileSafe, readdirSafe, existsSafe, statSafe } = require('../utils/fs-safe');
+const { readFileSafe, readdirSafe, statSafe, findProjectDirs } = require('../utils/fs-safe');
 const logger = require('../utils/logger');
 
 const SCANNER_ID = 'git-hooks';
@@ -36,18 +36,22 @@ const SUSPICIOUS_PATTERNS = [
   { pattern: /\bpowershell\b[^\n]{0,200}\s-enc/i, label: 'powershell-encoded', severity: 'critical' },
 ];
 
-function scan(platform, opts = {}) {
-  const projectRoots = platform.projectRoots || [];
+// projectDirs: optional [{ dir, gitDir }] from the shared directory walk.
+function scan(platform, opts = {}, projectDirs) {
+  const dirs = projectDirs || findProjectDirs(platform.projectRoots || [], { maxDepth: opts.maxDepth || 4 });
   const findings = [];
   const scannedHookDirs = new Set();
   let reposScanned = 0;
   let hooksFound = 0;
 
-  const inspectHooksDir = (hooksDir, repoLabel, origin) => {
+  // trustedRoot: hooks that are symlinks may only be read if they resolve inside it.
+  const inspectHooksDir = (hooksDir, repoLabel, origin, trustedRoot) => {
     let real;
     try { real = fs.realpathSync(hooksDir); } catch { return; }
     if (scannedHookDirs.has(real)) return;
     scannedHookDirs.add(real);
+    let realRoot = real;
+    try { realRoot = fs.realpathSync(trustedRoot); } catch { /* keep hooks dir */ }
 
     for (const entry of readdirSafe(hooksDir)) {
       if (!HOOK_NAMES.has(entry)) continue;
@@ -55,21 +59,30 @@ function scan(platform, opts = {}) {
       const stat = statSafe(hookPath);
       if (!stat || !stat.isFile()) continue;
       hooksFound++;
+
+      let target;
+      try { target = fs.realpathSync(hookPath); } catch { continue; }
+      if (!isInside(target, realRoot) && !isInside(target, real)) {
+        findings.push(symlinkFinding(entry, hookPath, target, repoLabel, origin, stat));
+        continue;
+      }
       const content = readFileSafe(hookPath, { maxBytes: MAX_HOOK_BYTES });
       if (content == null) continue;
       findings.push(buildFinding(entry, hookPath, repoLabel, origin, stat, content));
     }
   };
 
-  for (const gitDir of findGitDirs(projectRoots, opts.maxDepth || 4)) {
+  for (const { dir: repoPath, gitDir: hasGit } of dirs) {
+    if (!hasGit) continue;
+    const gitDir = resolveGitDir(repoPath);
+    if (!gitDir) continue;
     reposScanned++;
-    const repoPath = gitDir.workTree;
-    inspectHooksDir(path.join(gitDir.dir, 'hooks'), repoPath, '.git/hooks');
-    const commonDir = readCommonDir(gitDir.dir);
-    if (commonDir) inspectHooksDir(path.join(commonDir, 'hooks'), repoPath, '.git/hooks');
+    inspectHooksDir(path.join(gitDir, 'hooks'), repoPath, '.git/hooks', repoPath);
+    const commonDir = readCommonDir(gitDir);
+    if (commonDir) inspectHooksDir(path.join(commonDir, 'hooks'), repoPath, '.git/hooks', repoPath);
 
-    const hooksPath = readHooksPath(path.join(commonDir || gitDir.dir, 'config'));
-    if (hooksPath) inspectHooksDir(resolveConfigPath(hooksPath, repoPath, null), repoPath, 'core.hooksPath (repo)');
+    const hooksPath = readHooksPath(path.join(commonDir || gitDir, 'config'));
+    if (hooksPath) inspectHooksDir(resolveConfigPath(hooksPath, repoPath, null), repoPath, 'core.hooksPath (repo)', repoPath);
   }
 
   // A global core.hooksPath applies to every repo of that user — a persistence point.
@@ -78,7 +91,8 @@ function scan(platform, opts = {}) {
     const hooksPath = readHooksPath(cfg);
     if (!hooksPath) continue;
     const home = path.dirname(cfg);
-    inspectHooksDir(resolveConfigPath(hooksPath, home, home), `(global ${cfg})`, 'core.hooksPath (global)');
+    const dir = resolveConfigPath(hooksPath, home, home);
+    inspectHooksDir(dir, `(global ${cfg})`, 'core.hooksPath (global)', dir);
   }
 
   const suspicious = findings.filter(f => f.severity !== 'info').length;
@@ -105,7 +119,7 @@ function buildFinding(hookName, hookPath, repo, origin, stat, content) {
     path: hookPath,
     repo,
     origin,
-    executable: !!(stat.mode & 0o111),
+    executable: executableBit(stat),
     size: stat.size,
   };
   if (matched.length === 0) {
@@ -153,41 +167,42 @@ function readCommonDir(gitDir) {
   return raw ? path.resolve(gitDir, raw.trim()) : null;
 }
 
-// Finds repos under roots. `.git` may be a directory or a file ("gitdir: <path>") for
-// worktrees and submodules. Returns [{ dir: <git dir>, workTree: <repo root> }].
-function findGitDirs(roots, maxDepth) {
-  const results = [];
-  const skip = new Set(['node_modules', '.git', '__pycache__', 'dist', 'build', 'target', '.cache', '.local']);
-
-  function walk(dir, depth) {
-    if (depth > maxDepth) return;
-
-    const dotGit = path.join(dir, '.git');
-    const st = statSafe(dotGit);
-    if (st && st.isDirectory()) {
-      results.push({ dir: dotGit, workTree: dir });
-    } else if (st && st.isFile()) {
-      const raw = readFileSafe(dotGit, { maxBytes: 4096 });
-      const m = raw && raw.match(/^gitdir:\s*(.+)$/m);
-      if (m) results.push({ dir: path.resolve(dir, m[1].trim()), workTree: dir });
-    }
-
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch { return; }
-
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-      if (skip.has(entry.name.toLowerCase())) continue;
-      walk(path.join(dir, entry.name), depth + 1);
-    }
+// .git may be a directory, or a file ("gitdir: <path>") for worktrees and submodules.
+function resolveGitDir(workTree) {
+  const dotGit = path.join(workTree, '.git');
+  const st = statSafe(dotGit);
+  if (st && st.isDirectory()) return dotGit;
+  if (st && st.isFile()) {
+    const raw = readFileSafe(dotGit, { maxBytes: 4096 });
+    const m = raw && raw.match(/^gitdir:\s*(.+)$/m);
+    if (m) return path.resolve(workTree, m[1].trim());
   }
+  return null;
+}
 
-  for (const root of roots) {
-    if (existsSafe(root)) walk(root, 0);
-  }
-  return results;
+function isInside(p, root) {
+  return p === root || p.startsWith(root + path.sep);
+}
+
+// Permission bits carry no meaning on Windows.
+function executableBit(stat) {
+  return process.platform === 'win32' ? null : !!(stat.mode & 0o111);
+}
+
+function symlinkFinding(hookName, hookPath, target, repo, origin, stat) {
+  return {
+    severity: 'medium',
+    type: 'suspicious_git_hook',
+    hook: hookName,
+    path: hookPath,
+    repo,
+    origin,
+    executable: executableBit(stat),
+    size: stat.size,
+    symlink_target: target,
+    triggers: ['symlink-outside-repo'],
+    text: `Git hook "${hookName}" in ${repo} (${origin}) is a symlink to ${target}, outside the repository`,
+  };
 }
 
 module.exports = { scan, SCANNER_ID, readHooksPath };

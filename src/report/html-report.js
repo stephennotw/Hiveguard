@@ -16,6 +16,7 @@ function generateReport(result) {
   const threatMatches = result.threat_matches || [];
   const catalogs = result.catalogs || [];
   const ecosystems = result.ecosystems || {};
+  const hygieneFlagged = (ecosystems.lifecycle_scripts?.total_findings || 0) + (ecosystems.git_hooks?.suspicious || 0) + (ecosystems.ai_instructions?.suspicious || 0);
 
   // Build searchable package array for client-side
   const searchPkgs = packages.map((p, i) => ({
@@ -139,6 +140,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
     <div class="nav-item" onclick="showPanel('go')">🔷 Go<span class="badge">${summary.ecosystems.go_projects} projects</span></div>
     <div class="nav-item" onclick="showPanel('extensions')">🔌 Extensions<span class="badge">${summary.ecosystems.editor_extensions + summary.ecosystems.browser_extensions}</span></div>
     <div class="nav-item" onclick="showPanel('mcp')">🔗 MCP<span class="badge">${summary.ecosystems.mcp_servers}</span></div>
+    <div class="nav-item" onclick="showPanel('hygiene')">🪝 Scripts, Hooks &amp; AI<span class="badge${hygieneFlagged > 0 ? ' critical' : ''}">${hygieneFlagged}</span></div>
   </div></div>`;
 
   html += `<div class="main">`;
@@ -258,6 +260,14 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<div class="panel" id="panel-threats">
   <h2 style="color:#fff;margin-bottom:.5rem">🛡️ Threat Intelligence</h2>
   <p style="color:var(--text-dim);font-size:.82rem;margin-bottom:1.5rem">${ti.catalogs_loaded} catalogs, ${ti.total_known_bad_versions} known-compromised versions indexed.</p>`;
+  const sourceRows = Object.entries(ti.sources || {});
+  if (sourceRows.length > 0) {
+    const labels = { bumblebee: 'Bumblebee live feed', osv: 'OSV.dev (OpenSSF)', ghsa: 'GitHub Advisory DB' };
+    html += `<p style="font-size:.78rem;margin:-1rem 0 1.5rem">${sourceRows.map(([k, v]) => {
+      const bad = v.status === 'failed' || v.status === 'partial';
+      return `<span style="color:${bad ? 'var(--critical)' : 'var(--text-dim)'}">${esc(labels[k] || k)}: ${esc(v.status)}${v.error ? ` (${esc(v.error)})` : ''}</span>`;
+    }).join(' · ')}</p>`;
+  }
 
   if (threatMatches.length > 0) {
     html += `<div style="background:var(--critical-bg);border:1px solid rgba(255,71,87,.3);border-radius:12px;padding:1.25rem;margin-bottom:1.5rem">
@@ -368,6 +378,63 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   }
   html += `</div>`;
 
+  // ── SCRIPTS, HOOKS & AI PANEL ──
+  const sevTag = (sev) => `<span class="sev sev-${esc(sev)}">${esc(sev)}</span>`;
+  const codeCell = (t) => `<code style="font-size:.68rem;word-break:break-all;color:var(--text-dim)">${esc(t)}</code>`;
+  html += `<div class="panel" id="panel-hygiene"><h2 style="color:#fff;margin-bottom:.5rem">🪝 Install Scripts, Git Hooks &amp; AI Files</h2>
+    <p style="color:var(--text-dim);font-size:.82rem;margin-bottom:1.5rem">Code that runs automatically: npm install hooks, git hooks, and instruction/config files read by AI coding assistants. Excerpts are attacker-controlled text.</p>`;
+
+  const lc = ecosystems.lifecycle_scripts || {};
+  html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+    <h3>📜 npm install scripts</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${lc.total_findings || 0} flagged / ${lc.packages_scanned || 0} packages</span>
+  </div><div class="card-body">`;
+  if ((lc.findings || []).length === 0) html += `<p style="color:var(--text-dim);font-size:.8rem">No suspicious install scripts.</p>`;
+  else {
+    html += `<table><thead><tr><th>Severity</th><th>Package</th><th>Hook</th><th>Triggers</th><th>Script</th></tr></thead><tbody>`;
+    for (const f of lc.findings) {
+      html += `<tr><td>${sevTag(f.severity)}</td><td>${esc(f.package)}<div style="font-size:.65rem;color:var(--text-dim)">${esc(f.path)}</div></td><td>${esc(f.hook)}</td><td style="font-size:.7rem">${(f.triggers || []).map(esc).join(', ')}${(f.script_files || []).length ? `<div style="color:var(--text-dim)">via ${f.script_files.map(esc).join(', ')}</div>` : ''}</td><td>${codeCell(f.script)}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  html += `</div></div>`;
+
+  const gh = ecosystems.git_hooks || {};
+  html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+    <h3>🪝 Git hooks</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${gh.suspicious || 0} suspicious / ${gh.hooks_found || 0} hooks in ${gh.repos_scanned || 0} repos</span>
+  </div><div class="card-body">`;
+  if ((gh.findings || []).length === 0) html += `<p style="color:var(--text-dim);font-size:.8rem">No custom git hooks found.</p>`;
+  else {
+    html += `<table><thead><tr><th>Severity</th><th>Hook</th><th>Repository</th><th>Source</th><th>Triggers</th></tr></thead><tbody>`;
+    for (const f of gh.findings) {
+      html += `<tr><td>${sevTag(f.severity)}</td><td>${esc(f.hook)}</td><td style="font-size:.72rem">${esc(f.repo)}</td><td style="font-size:.72rem">${esc(f.origin || '')}</td><td style="font-size:.7rem">${(f.triggers || []).map(esc).join(', ') || '—'}${f.symlink_target ? `<div style="color:var(--text-dim)">→ ${esc(f.symlink_target)}</div>` : ''}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  html += `</div></div>`;
+
+  const ai = ecosystems.ai_instructions || {};
+  const aiFlags = new Map((ai.findings || []).map(f => [f.path, f]));
+  html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+    <h3>🤖 AI assistant files</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${ai.suspicious || 0} flagged / ${ai.files_found || 0} files</span>
+  </div><div class="card-body">`;
+  if ((ai.inventory || []).length === 0) html += `<p style="color:var(--text-dim);font-size:.8rem">No AI assistant instruction or config files found.</p>`;
+  else {
+    html += `<table><thead><tr><th>Severity</th><th>Tool</th><th>File</th><th>Details</th></tr></thead><tbody>`;
+    const sevRank = { critical: 0, high: 1, medium: 2, low: 3 };
+    const rows = [...ai.inventory].sort((a, b) => (sevRank[(aiFlags.get(a.path) || {}).severity] ?? 9) - (sevRank[(aiFlags.get(b.path) || {}).severity] ?? 9));
+    for (const item of rows) {
+      const f = aiFlags.get(item.path);
+      const details = [];
+      if (f) details.push((f.triggers || []).map(esc).join(', '));
+      for (const h of (item.hooks || [])) details.push(`hook ${esc(h.event)}: ${codeCell(h.command)}`);
+      for (const t of (item.autorun_tasks || [])) details.push(`runs on folder open: ${codeCell(t.command)}`);
+      if (item.symlink_target) details.push(`→ ${esc(item.symlink_target)}`);
+      html += `<tr><td>${f ? sevTag(f.severity) : '<span style="color:var(--text-dim);font-size:.7rem">—</span>'}</td><td>${esc(item.tool)}</td><td style="font-size:.72rem;word-break:break-all">${esc(item.path)}</td><td style="font-size:.7rem">${details.join('<br>') || '—'}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  html += `</div></div></div>`;
+
   // ── MODAL ──
   html += `<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal()">
     <div class="modal"><div class="modal-header"><h2 id="modalTitle">Details</h2><button class="modal-close" onclick="closeModal()">×</button></div>
@@ -375,14 +442,14 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
 
   // Footer
   html += `<div style="text-align:center;color:var(--text-muted);font-size:.7rem;margin-top:2rem;padding:1rem">
-    HiveGuard v${meta.version || '1.0.0'} · ${esc(meta.scan_time)} · ${ti.catalogs_loaded} threat catalogs · Read-only scan
+    HiveGuard v${esc(meta.version || '')} · ${esc(meta.scan_time)} · ${ti.catalogs_loaded} threat catalogs · Read-only scan
   </div></div></div>`;
 
   // ── JAVASCRIPT ──
   html += `<script>
 const P=${scriptJson(searchPkgs)};
 let ecoF='all';
-function showPanel(n){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));const el=document.getElementById('panel-'+n);if(el)el.classList.add('active');document.querySelectorAll('.nav-item').forEach(i=>{const labels={overview:'📊',search:'🔍',threats:'🛡️',findings:'⚠️',npm:'📦',pypi:'🐍',go:'🔷',extensions:'🔌',mcp:'🔗'};if(i.textContent.includes(labels[n]))i.classList.add('active')})}
+function showPanel(n){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));const el=document.getElementById('panel-'+n);if(el)el.classList.add('active');document.querySelectorAll('.nav-item').forEach(i=>{const labels={overview:'📊',search:'🔍',threats:'🛡️',findings:'⚠️',npm:'📦',pypi:'🐍',go:'🔷',extensions:'🔌',mcp:'🔗',hygiene:'🪝'};if(i.textContent.includes(labels[n]))i.classList.add('active')})}
 function globalFilter(){const q=document.getElementById('globalSearch').value.toLowerCase();const rows=document.querySelectorAll('#searchTableBody tr');let c=0;rows.forEach(r=>{const s=r.dataset.s;const e=r.dataset.eco;const t=r.classList.contains('threat-row');let em=ecoF==='all'||e===ecoF||(ecoF==='threats'&&t);let tm=!q||s.includes(q);const show=em&&tm;r.style.display=show?'':'none';if(show)c++});document.getElementById('searchCount').textContent=c.toLocaleString()}
 function setEcoFilter(el,e){document.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));el.classList.add('active');ecoF=e;globalFilter()}
 function filterTable(input){const f=input.value.toLowerCase();const t=input.parentElement.querySelector('table');if(!t)return;t.querySelectorAll('tbody tr').forEach(r=>{r.style.display=r.textContent.toLowerCase().includes(f)?'':'none'})}

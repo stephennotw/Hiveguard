@@ -8,14 +8,20 @@ const logger = require('./logger');
  * Read-only filesystem helpers. Never writes, never executes.
  */
 
+// Only regular files are read: opening a FIFO or device would block or never end.
 function readFileSafe(filePath, opts = {}) {
   try {
-    if (opts.maxBytes) {
+    const st = fs.statSync(filePath);
+    if (!st.isFile()) {
+      logger.debug('fs-safe', `Not a regular file, skipping ${filePath}`);
+      return null;
+    }
+    if (opts.maxBytes && st.size > opts.maxBytes) {
       const fd = fs.openSync(filePath, 'r');
       try {
         const buf = Buffer.alloc(opts.maxBytes);
         const bytesRead = fs.readSync(fd, buf, 0, opts.maxBytes, 0);
-        return buf.slice(0, bytesRead).toString('utf8');
+        return buf.subarray(0, bytesRead).toString('utf8');
       } finally {
         fs.closeSync(fd);
       }
@@ -109,9 +115,10 @@ const BUILTIN_SKIP = new Set([
  * Walk directories up to maxDepth, yielding files matching a filter.
  * Respects symlink safety and skips unreadable dirs.
  * Uses a built-in skip set plus caller-supplied extras for O(1) lookups.
+ * opts.onDir(dirPath, dirents) is called for every directory visited.
  */
 function walkSync(dir, opts = {}) {
-  const { maxDepth = 10, filter = null, skipDirs = [] } = opts;
+  const { maxDepth = 10, filter = null, skipDirs = [], onDir = null } = opts;
   const results = [];
   const extraSkip = skipDirs.length > 0 ? new Set(skipDirs) : null;
 
@@ -123,6 +130,7 @@ function walkSync(dir, opts = {}) {
     } catch {
       return;
     }
+    if (onDir) onDir(currentDir, entries);
 
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
@@ -184,6 +192,39 @@ function findMultipleFiles(roots, fileNames, opts = {}) {
   return resultMap;
 }
 
+// Entries that mark a directory as a project (or an AI-assistant workspace) worth inspecting.
+const PROJECT_MARKERS = new Set([
+  'package.json', 'go.mod', 'Cargo.toml', 'composer.json', 'Gemfile', 'pyproject.toml',
+  'setup.py', 'pom.xml', 'build.gradle', 'build.gradle.kts',
+  '.cursorrules', '.windsurfrules', '.clinerules', 'CLAUDE.md', 'AGENTS.md', 'GEMINI.md', '.mcp.json',
+]);
+
+/**
+ * Returns an onDir callback for walkSync that records project directories into `out`
+ * as { dir, gitDir } where gitDir is true when the directory holds a .git dir or file.
+ */
+function projectDirCollector(out) {
+  return (dir, entries) => {
+    let isProject = false;
+    let gitDir = false;
+    for (const e of entries) {
+      if (e.isSymbolicLink()) continue;
+      if (e.name === '.git' && (e.isDirectory() || e.isFile())) gitDir = true;
+      else if (PROJECT_MARKERS.has(e.name)) isProject = true;
+    }
+    if (isProject || gitDir) out.push({ dir, gitDir });
+  };
+}
+
+/** Walk roots once and return project directories (see projectDirCollector). */
+function findProjectDirs(roots, opts = {}) {
+  const out = [];
+  const onDir = projectDirCollector(out);
+  for (const root of roots) {
+    if (existsSafe(root)) walkSync(root, { ...opts, filter: () => false, onDir });
+  }
+  return out;
+}
 
 module.exports = {
   readFileSafe,
@@ -194,4 +235,6 @@ module.exports = {
   walkSync,
   findFiles,
   findMultipleFiles,
+  findProjectDirs,
+  projectDirCollector,
 };

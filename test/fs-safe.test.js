@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { readFileSafe, readJsonSafe, existsSafe, statSafe, walkSync } = require('../src/utils/fs-safe');
+const { readFileSafe, readJsonSafe, existsSafe, statSafe, walkSync, findProjectDirs } = require('../src/utils/fs-safe');
 
 const TMP = path.join(os.tmpdir(), 'hiveguard-test-' + process.pid);
 
@@ -120,5 +120,36 @@ describe('walkSync', () => {
     const results = walkSync(dir);
     assert.equal(results.length, 1);
     assert.ok(results[0].endsWith('top.txt'));
+  });
+});
+
+describe('non-regular files and project discovery', () => {
+  const { spawnSync } = require('child_process');
+  let tmp;
+  before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-fs2-')); });
+  after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it('does not block on a FIFO named like a manifest', { skip: process.platform === 'win32' }, (t) => {
+    const fifo = path.join(tmp, 'package.json');
+    if (spawnSync('mkfifo', [fifo]).status !== 0) return t.skip('mkfifo unavailable');
+    assert.equal(readFileSafe(fifo), null);
+    assert.equal(readJsonSafe(fifo), null);
+    assert.equal(readFileSafe(fifo, { maxBytes: 10 }), null);
+  });
+
+  it('returns null for a directory', () => {
+    assert.equal(readFileSafe(tmp), null);
+  });
+
+  it('findProjectDirs finds manifests, AI files and .git, and skips node_modules', () => {
+    const mk = (p, c = '') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c); };
+    const root = path.join(tmp, 'tree');
+    mk(path.join(root, 'app', 'package.json'), '{}');
+    mk(path.join(root, 'notes', 'CLAUDE.md'));
+    mk(path.join(root, 'repo', '.git', 'HEAD'));
+    mk(path.join(root, 'app', 'node_modules', 'dep', 'package.json'), '{}');
+    mk(path.join(root, 'plain', 'readme.txt'));
+    const found = findProjectDirs([root], { maxDepth: 4 }).map(d => [path.relative(root, d.dir), d.gitDir]).sort();
+    assert.deepEqual(found, [['app', false], ['notes', false], ['repo', true]]);
   });
 });

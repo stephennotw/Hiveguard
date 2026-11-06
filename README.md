@@ -105,7 +105,7 @@ The `.node/` directory is gitignored and never committed to the repo.
 | `--custom-intel <dir>` | Dir(s) with custom threat intel JSON | none |
 | `--no-report` | Skip HTML report | off |
 | `--no-secrets` | Skip secrets hygiene scan | off |
-| `--max-depth <n>` | Max directory traversal depth | 6 |
+| `--max-depth <n>` | Max directory traversal depth | 4 |
 | `--verbose` / `-v` | Debug logging | off |
 
 ## Exit Codes
@@ -196,6 +196,11 @@ Note: Threat intel catalogs are loaded into memory at runtime — no disk cache 
 | **Browser Extensions** | Chrome, Edge, Brave | Extension `manifest.json` |
 | **MCP Configs** | Claude, Cursor, Windsurf MCP servers | Config JSON files |
 | **Secrets Hygiene** | `.env` files, git creds, SSH keys | File detection + metadata |
+| **Install Scripts** | Suspicious `preinstall`/`install`/`postinstall` hooks, including the files they run (e.g. `node setup_bun.js`) | `node_modules/**/package.json` (project, nested, scoped, global) |
+| **Git Hooks** | Custom and suspicious hooks, including `core.hooksPath` (repo and global) and symlinks leaving the repo | `.git/hooks`, `.git/config`, `~/.gitconfig` |
+| **AI Assistant Files** | Instruction/config files read by AI coding tools: prompt injection, hidden Unicode, exfiltration instructions, auto-run VS Code tasks, Claude Code hook commands | `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `.cursor/rules/`, `.github/copilot-instructions.md`, `.claude/settings.json`, `.vscode/tasks.json`, … (project and user level) |
+
+Install-script, git-hook and AI-file excerpts in the output are attacker-controlled text; invisible and control characters are stripped from them.
 
 ## Threat Intelligence
 
@@ -208,6 +213,17 @@ HiveGuard uses a **tiered fallback chain** to ensure threat intel is always avai
 | **3rd** | Custom catalogs | User-provided JSON files via `--custom-intel` or `~/.hiveguard/custom-catalogs/` |
 
 Custom catalogs are **always additive** — they merge on top of live/baseline and win on conflict.
+
+Two live sources are also queried for the exact installed `name@version` of every package (skipped with `--offline`):
+
+| Source | What it adds | Requirements |
+|---|---|---|
+| [OSV.dev](https://osv.dev) | OpenSSF malicious-package advisories (`MAL-*`), with summary, hashes and origin | None |
+| [GitHub Advisory Database](https://github.com/advisories?query=type%3Amalware) | GitHub malware advisories | `GITHUB_TOKEN` (or `GH_TOKEN`); skipped without it. OSV already includes most of this data. |
+
+Every source reports its status in `threat_intel.sources` (`ok`, `partial`, `failed`, `skipped`) and failures are printed to stderr, so an unreachable source is never mistaken for a clean result.
+
+Outbound requests honour `HTTPS_PROXY` / `https_proxy` and `NO_PROXY` / `no_proxy`.
 
 The report and JSON output always indicate which source tier was used: `live`, `baseline`, `custom`, or `live+custom`.
 

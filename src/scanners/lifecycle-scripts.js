@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { readJsonSafe, readFileSafe, statSafe, existsSafe } = require('../utils/fs-safe');
 const logger = require('../utils/logger');
+const { sanitizeExcerpt } = require('../utils/text');
 
 const SCANNER_ID = 'lifecycle-scripts';
 
@@ -170,7 +171,7 @@ function checkScripts(scripts, packageName, project, pkgDir) {
       package: packageName,
       project,
       hook,
-      script: script.slice(0, 500),
+      script: sanitizeExcerpt(script, 500),
       script_files: scriptFiles,
       triggers: labels,
       path: pkgDir,

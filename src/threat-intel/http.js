@@ -1,8 +1,73 @@
 'use strict';
 
+const http = require('http');
 const https = require('https');
+const tls = require('tls');
+const VERSION = require('../version');
 
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
+const USER_AGENT = `hiveguard/${VERSION}`;
+
+/**
+ * Proxy URL for a target, from HTTPS_PROXY/https_proxy, honouring NO_PROXY/no_proxy
+ * (comma-separated hosts or .suffixes; "*" disables). Returns null for direct access.
+ */
+function proxyFor(targetUrl, env = process.env) {
+  const proxy = env.HTTPS_PROXY || env.https_proxy;
+  if (!proxy) return null;
+  const host = new URL(targetUrl).hostname.toLowerCase();
+  const noProxy = (env.NO_PROXY || env.no_proxy || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  for (const entry of noProxy) {
+    if (entry === '*') return null;
+    const bare = entry.replace(/^\*?\./, '').replace(/:\d+$/, '');
+    if (host === bare || host.endsWith('.' + bare)) return null;
+  }
+  return proxy;
+}
+
+// https.Agent that reaches the target through an HTTP CONNECT tunnel.
+class TunnelAgent extends https.Agent {
+  constructor(proxyUrl) {
+    super({ keepAlive: false });
+    this.proxy = new URL(proxyUrl);
+  }
+
+  createConnection(options, callback) {
+    const target = `${options.host}:${options.port || 443}`;
+    const headers = { Host: target };
+    if (this.proxy.username) {
+      const creds = `${decodeURIComponent(this.proxy.username)}:${decodeURIComponent(this.proxy.password)}`;
+      headers['Proxy-Authorization'] = `Basic ${Buffer.from(creds).toString('base64')}`;
+    }
+    const transport = this.proxy.protocol === 'https:' ? https : http;
+    const req = transport.request({
+      host: this.proxy.hostname,
+      port: this.proxy.port || (this.proxy.protocol === 'https:' ? 443 : 80),
+      method: 'CONNECT',
+      path: target,
+      headers,
+      agent: false,
+    });
+    req.once('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        callback(new Error(`proxy CONNECT ${target} failed: ${res.statusCode}`));
+        return;
+      }
+      callback(null, tls.connect({ ...options, socket, servername: options.servername || options.host }));
+    });
+    req.once('error', callback);
+    req.end();
+  }
+}
+
+const agents = new Map();
+function agentFor(url) {
+  const proxy = proxyFor(url);
+  if (!proxy) return undefined;
+  if (!agents.has(proxy)) agents.set(proxy, new TunnelAgent(proxy));
+  return agents.get(proxy);
+}
 
 /**
  * Minimal HTTPS request helper. Resolves { status, headers, body } for any status;
@@ -12,7 +77,7 @@ function request(url, { method = 'GET', body = null, headers = {}, timeout = 200
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const payload = body == null ? null : (typeof body === 'string' ? body : JSON.stringify(body));
-    const reqHeaders = { 'User-Agent': 'hiveguard', ...headers };
+    const reqHeaders = { 'User-Agent': USER_AGENT, ...headers };
     if (payload != null) {
       reqHeaders['Content-Type'] = reqHeaders['Content-Type'] || 'application/json';
       reqHeaders['Content-Length'] = Buffer.byteLength(payload);
@@ -25,6 +90,7 @@ function request(url, { method = 'GET', body = null, headers = {}, timeout = 200
       method,
       headers: reqHeaders,
       timeout,
+      agent: agentFor(url),
     }, (res) => {
       const chunks = [];
       let size = 0;
@@ -46,4 +112,4 @@ function request(url, { method = 'GET', body = null, headers = {}, timeout = 200
   });
 }
 
-module.exports = { request };
+module.exports = { request, proxyFor, agentFor, USER_AGENT };

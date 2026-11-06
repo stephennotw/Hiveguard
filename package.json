@@ -1,6 +1,6 @@
 {
   "name": "hiveguard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Cross-platform endpoint supply chain scanner with live threat intelligence",
   "main": "bin/hiveguard.js",
   "bin": {

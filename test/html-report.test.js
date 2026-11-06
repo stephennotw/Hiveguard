@@ -35,12 +35,13 @@ describe('html-report XSS escaping', () => {
     assert.ok(html.includes('test&#39;platform'));
   });
 
-  it('escapes single quotes in attribute contexts', () => {
+  it('escapes single quotes in rendered values', () => {
     const html = generateReport({
       ...minimalResult,
-      meta: { ...minimalResult.meta, scanId: "id'with'quotes" },
+      meta: { ...minimalResult.meta, hostname: "host'with'quotes" },
     });
-    assert.ok(!html.includes("id'with'quotes"));
+    assert.ok(html.includes('host&#39;with&#39;quotes'));
+    assert.ok(!html.includes("host'with'quotes"));
   });
 });
 
@@ -63,5 +64,31 @@ describe('html-report script and URL contexts', () => {
       threat_matches: [{ ecosystem: 'npm', name: 'e', version: '1', project: 'p', threats: [{ attackType: 'a', catalog: 'c', source: 'javascript:alert(1)' }] }],
     });
     assert.ok(!html.includes('href="javascript:'));
+  });
+});
+
+describe('html-report scripts, hooks and AI panel', () => {
+  const base = {
+    meta: { hostname: 'h', platform: 'linux', scan_time: new Date().toISOString() },
+    summary: { ecosystems: {} }, findings: [], packages: [],
+  };
+
+  it('renders new scanner results escaped, and source status', () => {
+    const html = generateReport({
+      ...base,
+      threat_intel: { sources: { osv: { status: 'failed', error: 'OSV API 403' }, ghsa: { status: 'skipped', error: 'GITHUB_TOKEN not set' } } },
+      ecosystems: {
+        lifecycle_scripts: { packages_scanned: 3, total_findings: 1, findings: [{ severity: 'critical', package: 'evil<b>', hook: 'postinstall', triggers: ['pipe-to-shell'], script: 'curl x | bash', path: '/p' }] },
+        git_hooks: { repos_scanned: 1, hooks_found: 1, suspicious: 0, findings: [{ severity: 'info', hook: 'pre-commit', repo: '/r', origin: '.git/hooks', triggers: [] }] },
+        ai_instructions: { files_found: 1, suspicious: 1, inventory: [{ path: '/r/.claude/settings.json', tool: 'Claude Code', hooks: [{ event: 'SessionStart', command: 'node <x>' }] }],
+          findings: [{ severity: 'medium', path: '/r/.claude/settings.json', triggers: ['permission-bypass-mode'] }] },
+      },
+    });
+    assert.ok(html.includes('id="panel-hygiene"'));
+    assert.ok(html.includes('evil&lt;b&gt;'));
+    assert.ok(html.includes('node &lt;x&gt;'));
+    assert.ok(html.includes('pre-commit'));
+    assert.ok(html.includes('permission-bypass-mode'));
+    assert.ok(html.includes('OSV.dev (OpenSSF): failed (OSV API 403)'));
   });
 });
