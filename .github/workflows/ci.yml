@@ -1,0 +1,44 @@
+name: CI
+
+# Deliberately opt-in to conserve Actions minutes: jobs run only when a pushed commit
+# message contains "[ci]", or when started by hand from the Actions tab (manual runs
+# need this file on the default branch). Skipped jobs use no minutes.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[ci]')
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 18
+          - os: ubuntu-latest
+            node: 22
+          - os: macos-latest
+            node: 22
+          - os: windows-latest
+            node: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Unit, end-to-end CLI, corpus (synthetic endpoints) and, on Windows, the
+      # run.bat / run.ps1 wrapper tests. bash expands the glob on every OS.
+      - name: Test suite
+        shell: bash
+        run: node --test test/*.test.js
