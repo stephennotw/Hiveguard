@@ -144,3 +144,38 @@ describe('threat-intel matcher', () => {
     });
   });
 });
+
+describe('mergeThreatMatches', () => {
+  const { mergeThreatMatches, isConcreteVersion } = require('../src/threat-intel/matcher');
+  const threat = (campaign) => ({ catalog: 'osv.dev', campaignName: campaign });
+
+  it('keeps the same name@version in different projects as separate matches', () => {
+    const target = [{ ecosystem: 'npm', name: 'evil', version: '1.0.0', project: 'A', source: 'a/lock', threats: [threat('bb')] }];
+    mergeThreatMatches(target, [
+      { ecosystem: 'npm', name: 'evil', version: '1.0.0', project: 'A', source: 'a/lock', threats: [threat('MAL-1')] },
+      { ecosystem: 'npm', name: 'evil', version: '1.0.0', project: 'B', source: 'b/lock', threats: [threat('MAL-1')] },
+    ]);
+    assert.equal(target.length, 2);
+    assert.deepEqual(target[0].threats.map(t => t.campaignName), ['bb', 'MAL-1']);
+    assert.deepEqual(target[1].threats.map(t => t.campaignName), ['MAL-1']);
+  });
+
+  it('does not duplicate a threat already present', () => {
+    const target = [{ ecosystem: 'npm', name: 'evil', version: '1.0.0', project: 'A', threats: [threat('MAL-1')] }];
+    mergeThreatMatches(target, [{ ecosystem: 'npm', name: 'evil', version: '1.0.0', project: 'A', threats: [threat('MAL-1')] }]);
+    mergeThreatMatches(target, [{ ecosystem: 'npm', name: 'evil', version: '1.0.0', project: 'A', threats: [threat('MAL-1')] }]);
+    assert.equal(target[0].threats.length, 1);
+  });
+
+  it('treats v-prefixed and bare versions as the same package', () => {
+    const target = [{ ecosystem: 'go', name: 'm', version: 'v1.2.3', project: 'A', threats: [threat('x')] }];
+    mergeThreatMatches(target, [{ ecosystem: 'go', name: 'm', version: '1.2.3', project: 'A', threats: [threat('y')] }]);
+    assert.equal(target.length, 1);
+    assert.equal(target[0].threats.length, 2);
+  });
+
+  it('isConcreteVersion accepts installed versions and rejects specs', () => {
+    for (const v of ['1.2.3', 'v0.17.0', '2.0.0rc1', '1.0.0-beta.1+build', '1!2.0']) assert.ok(isConcreteVersion(v), v);
+    for (const v of ['', '>=1.0', '^4.17.0', '~1.2', '*', 'latest', '1.0 - 2.0', null]) assert.ok(!isConcreteVersion(v), String(v));
+  });
+});

@@ -52,7 +52,7 @@ const aiInstructionsScanner = require(path.join(SRC_ROOT, 'scanners', 'ai-instru
 
 // Threat intel
 const { loadThreatIntel } = require(path.join(SRC_ROOT, 'threat-intel', 'sync'));
-const { buildIndex, matchPackages } = require(path.join(SRC_ROOT, 'threat-intel', 'matcher'));
+const { buildIndex, matchPackages, mergeThreatMatches } = require(path.join(SRC_ROOT, 'threat-intel', 'matcher'));
 const { queryOsv } = require(path.join(SRC_ROOT, 'threat-intel', 'osv'));
 const { queryGhsa } = require(path.join(SRC_ROOT, 'threat-intel', 'ghsa'));
 
@@ -276,61 +276,24 @@ async function main() {
   // Step 6: Threat intel matching (Bumblebee catalogs)
   const threatMatches = matchPackages(flatPackages, threatIndex);
 
-  // Step 6b: OpenSSF malicious package check via OSV.dev
-  let osvMatches = [];
-  if (!opts.offline) {
+  // Step 6b/6c: OpenSSF (OSV.dev) and GitHub Advisory DB malware checks.
+  // Each reports its own status so an unreachable source is never read as 'clean'.
+  const offlineSource = { matches: [], status: 'skipped', queried: 0, error: 'offline mode' };
+  const runSource = async (label, fn) => {
+    if (opts.offline) return offlineSource;
     try {
-      osvMatches = await queryOsv(flatPackages, { timeout: 20000 });
+      return await fn(flatPackages, { timeout: 20000 });
     } catch (e) {
-      logger.warn('core', `OSV.dev query failed (non-fatal): ${e.message}`);
+      logger.warn('core', `${label} query failed (non-fatal): ${e.message}`);
+      return { matches: [], status: 'failed', queried: 0, error: e.message };
     }
-  }
-
-  // Merge OSV matches, dedup against Bumblebee hits
-  const bumblebeeKeys = new Set(threatMatches.map(m =>
-    `${(m.ecosystem || '').toLowerCase()}:${(m.name || '').toLowerCase()}:${m.version}`
-  ));
-  for (const match of osvMatches) {
-    const key = `${(match.ecosystem || '').toLowerCase()}:${(match.name || '').toLowerCase()}:${match.version}`;
-    if (bumblebeeKeys.has(key)) {
-      const existing = threatMatches.find(m =>
-        (m.ecosystem || '').toLowerCase() === (match.ecosystem || '').toLowerCase()
-        && (m.name || '').toLowerCase() === (match.name || '').toLowerCase()
-        && m.version === match.version
-      );
-      if (existing) existing.threats.push(...match.threats);
-    } else {
-      threatMatches.push(match);
-    }
-  }
-
-  // Step 6c: GitHub Advisory Database malware check
-  let ghsaMatches = [];
-  if (!opts.offline) {
-    try {
-      ghsaMatches = await queryGhsa(flatPackages, { timeout: 20000 });
-    } catch (e) {
-      logger.warn('core', `GitHub Advisory DB query failed (non-fatal): ${e.message}`);
-    }
-  }
-
-  // Merge GHSA matches, dedup against existing hits
-  const existingKeys = new Set(threatMatches.map(m =>
-    `${(m.ecosystem || '').toLowerCase()}:${(m.name || '').toLowerCase()}:${m.version}`
-  ));
-  for (const match of ghsaMatches) {
-    const key = `${(match.ecosystem || '').toLowerCase()}:${(match.name || '').toLowerCase()}:${match.version}`;
-    if (existingKeys.has(key)) {
-      const existing = threatMatches.find(m =>
-        (m.ecosystem || '').toLowerCase() === (match.ecosystem || '').toLowerCase()
-        && (m.name || '').toLowerCase() === (match.name || '').toLowerCase()
-        && m.version === match.version
-      );
-      if (existing) existing.threats.push(...match.threats);
-    } else {
-      threatMatches.push(match);
-    }
-  }
+  };
+  const osvResult = await runSource('OSV.dev', queryOsv);
+  const ghsaResult = await runSource('GitHub Advisory DB', queryGhsa);
+  const osvMatches = osvResult.matches;
+  const ghsaMatches = ghsaResult.matches;
+  mergeThreatMatches(threatMatches, osvMatches);
+  mergeThreatMatches(threatMatches, ghsaMatches);
 
   // Step 7: Known CVE checks
   const cveFindings = checkKnownVulns(flatPackages);
@@ -459,6 +422,10 @@ async function main() {
       custom_dirs: intelResult.customDirs,
       osv_matches: osvMatches.length,
       ghsa_matches: ghsaMatches.length,
+      sources: {
+        osv: { status: osvResult.status, queried: osvResult.queried, error: osvResult.error },
+        ghsa: { status: ghsaResult.status, queried: ghsaResult.queried, error: ghsaResult.error },
+      },
       matches: threatMatches.length,
     },
     summary: {
@@ -516,7 +483,7 @@ async function main() {
 
   // If --json, also print to stdout
   if (opts.json) {
-    output.writeStdout(result);
+    await output.writeStdout(result);
   }
 
   // Summary to stderr
@@ -526,6 +493,11 @@ async function main() {
   process.stderr.write(`     📦 ${flatPackages.length} components inventoried\n`);
   process.stderr.write(`     🛡️  ${catalogs.length} threat catalogs (${totalVersions} known-bad versions)${osvMatches.length > 0 ? ` + ${osvMatches.length} OSV` : ''}\n`);
   process.stderr.write(`     ${threatMatches.length > 0 ? '🚨' : '✅'} ${threatMatches.length} threat matches\n`);
+  for (const [label, r] of [['OSV.dev', osvResult], ['GitHub Advisory DB', ghsaResult]]) {
+    if (r.status === 'failed' || r.status === 'partial') {
+      process.stderr.write(`     ⚠️  ${label} ${r.status} (${r.error}) — threat matches may be incomplete\n`);
+    }
+  }
   process.stderr.write(`     ⚠️  ${allFindings.length} findings (${allFindings.filter(f => f.severity === 'critical').length} critical, ${allFindings.filter(f => f.severity === 'high').length} high)\n`);
   process.stderr.write(`     📁 Results: ${opts.outputDir}\n`);
   process.stderr.write('  ────────────────────────────────────────────\n\n');

@@ -43,3 +43,25 @@ describe('html-report XSS escaping', () => {
     assert.ok(!html.includes("id'with'quotes"));
   });
 });
+
+describe('html-report script and URL contexts', () => {
+  const base = {
+    meta: { hostname: 'h', platform: 'linux', scan_time: new Date().toISOString() },
+    threat_intel: {}, summary: { ecosystems: {} }, findings: [], ecosystems: {},
+  };
+
+  it('does not let a package name break out of the embedded <script>', () => {
+    const html = generateReport({ ...base, packages: [{ ecosystem: 'npm', name: 'x</script><script>alert(1)</script>', version: '1.0.0' }] });
+    assert.ok(!html.includes('</script><script>alert(1)'));
+    assert.ok(html.includes('x\\u003c/script>'));
+  });
+
+  it('only links http(s) catalog sources', () => {
+    const html = generateReport({
+      ...base,
+      packages: [],
+      threat_matches: [{ ecosystem: 'npm', name: 'e', version: '1', project: 'p', threats: [{ attackType: 'a', catalog: 'c', source: 'javascript:alert(1)' }] }],
+    });
+    assert.ok(!html.includes('href="javascript:'));
+  });
+});

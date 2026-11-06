@@ -1,148 +1,162 @@
 'use strict';
 
-const https = require('https');
 const logger = require('../utils/logger');
+const http = require('./http');
+const { isConcreteVersion } = require('./matcher');
 
-const OSV_BATCH_URL = 'https://api.osv.dev/v1/querybatch';
+const OSV_API = 'https://api.osv.dev/v1';
 const BATCH_SIZE = 1000;
+const MAX_PAGE_FOLLOWS = 5;
+const MAX_DETAIL_FETCHES = 500;
+const DETAIL_CONCURRENCY = 8;
+
+const ECOSYSTEM_MAP = {
+  npm: 'npm',
+  pypi: 'PyPI',
+  go: 'Go',
+  rubygems: 'RubyGems',
+  cargo: 'crates.io',
+  composer: 'Packagist',
+  nuget: 'NuGet',
+  maven: 'Maven',
+};
 
 /**
- * Query OSV.dev for malicious package advisories (MAL-* only).
- * Accepts a flat package list [{ ecosystem, name, version }].
- * Returns matches in the same shape as Bumblebee threat matches so
- * they merge seamlessly into the existing threat match results.
+ * Check packages against OpenSSF malicious-package advisories (MAL-*) on OSV.dev.
  *
- * Only MAL-prefixed advisories are returned — CVEs and GHSAs are
- * filtered out to keep HiveGuard focused on supply chain malware.
+ * querybatch only returns { id, modified } per vuln, so each distinct MAL id is
+ * then fetched once from /v1/vulns/{id} for summary, details, and indicators.
+ * Identical name@version entries (same package in many projects) are queried once.
+ *
+ * Returns { matches, status, queried, error } where status is
+ * 'ok' | 'partial' | 'failed' | 'skipped'. Matches use the Bumblebee match shape.
  */
 async function queryOsv(packages, opts = {}) {
   const { timeout = 20000 } = opts;
-  if (!packages || packages.length === 0) return [];
+  const result = { matches: [], status: 'skipped', queried: 0, error: null };
+  if (!packages || packages.length === 0) return result;
 
-  const ecosystemMap = {
-    npm: 'npm',
-    pypi: 'PyPI',
-    go: 'Go',
-    rubygems: 'RubyGems',
-    cargo: 'crates.io',
-    composer: 'Packagist',
-    nuget: 'NuGet',
-    maven: 'Maven',
-  };
-
-  const queries = [];
-  const queryIndexMap = [];
-
+  // Unique (ecosystem, name, version) -> indices into packages
+  const unique = new Map();
   for (let i = 0; i < packages.length; i++) {
     const pkg = packages[i];
-    const osvEcosystem = ecosystemMap[(pkg.ecosystem || '').toLowerCase()];
-    if (!osvEcosystem) continue;
-
-    queries.push({
-      package: { name: pkg.name, ecosystem: osvEcosystem },
-      version: pkg.version,
-    });
-    queryIndexMap.push(i);
+    const eco = ECOSYSTEM_MAP[(pkg.ecosystem || '').toLowerCase()];
+    if (!eco || !pkg.name || !isConcreteVersion(pkg.version)) continue;
+    const key = `${eco}\0${pkg.name}\0${pkg.version}`;
+    if (!unique.has(key)) unique.set(key, { query: { package: { name: pkg.name, ecosystem: eco }, version: pkg.version }, indices: [], malIds: new Set() });
+    unique.get(key).indices.push(i);
   }
+  if (unique.size === 0) return result;
 
-  if (queries.length === 0) return [];
+  const entries = [...unique.values()];
+  result.queried = entries.length;
+  logger.info('osv', `Checking ${entries.length} unique packages against OSV.dev...`);
 
-  logger.info('osv', `Checking ${queries.length} packages against OSV.dev...`);
-
-  const allMatches = [];
-
-  for (let offset = 0; offset < queries.length; offset += BATCH_SIZE) {
-    const batch = queries.slice(offset, offset + BATCH_SIZE);
-    const batchIndices = queryIndexMap.slice(offset, offset + BATCH_SIZE);
-
+  let batches = 0;
+  let failedBatches = 0;
+  for (let offset = 0; offset < entries.length; offset += BATCH_SIZE) {
+    const batch = entries.slice(offset, offset + BATCH_SIZE);
+    batches++;
     try {
-      const response = await httpsPost(OSV_BATCH_URL, { queries: batch }, timeout);
-      const parsed = JSON.parse(response);
-
-      if (!parsed.results || !Array.isArray(parsed.results)) continue;
-
-      for (let j = 0; j < parsed.results.length; j++) {
-        const result = parsed.results[j];
-        if (!result.vulns || result.vulns.length === 0) continue;
-
-        const malVulns = result.vulns.filter(v => v.id && v.id.startsWith('MAL-'));
-        if (malVulns.length === 0) continue;
-
-        const pkgIndex = batchIndices[j];
-        const pkg = packages[pkgIndex];
-
-        allMatches.push({
-          ...pkg,
-          threats: malVulns.map(v => ({
-            attackType: v.summary || 'Malicious package (OpenSSF)',
-            campaignName: v.id,
-            catalog: 'osv.dev',
-            source: 'openssf',
-            indicators: extractIndicators(v),
-            entryName: v.id,
-            osvId: v.id,
-            aliases: v.aliases || [],
-            details: (v.details || '').slice(0, 500),
-          })),
-        });
+      const results = await postBatch(batch.map(e => e.query), timeout);
+      for (let j = 0; j < batch.length; j++) {
+        collectMalIds(results[j], batch[j]);
+        let token = results[j] && results[j].next_page_token;
+        for (let follow = 0; token && follow < MAX_PAGE_FOLLOWS; follow++) {
+          const [page] = await postBatch([{ ...batch[j].query, page_token: token }], timeout);
+          collectMalIds(page, batch[j]);
+          token = page && page.next_page_token;
+        }
       }
     } catch (e) {
+      failedBatches++;
+      result.error = e.message;
       logger.warn('osv', `Batch query failed (offset ${offset}): ${e.message}`);
     }
   }
+  result.status = failedBatches === 0 ? 'ok' : failedBatches === batches ? 'failed' : 'partial';
 
-  if (allMatches.length > 0) {
-    logger.warn('osv', `OSV MATCHES: ${allMatches.length} malicious packages found!`);
-  } else {
-    logger.info('osv', `No OSV malware matches among ${queries.length} packages`);
+  const allIds = new Set();
+  for (const e of entries) for (const id of e.malIds) allIds.add(id);
+  const details = await fetchDetails([...allIds], timeout);
+
+  for (const e of entries) {
+    if (e.malIds.size === 0) continue;
+    const threats = [...e.malIds].map(id => toThreat(id, details.get(id)));
+    for (const i of e.indices) {
+      result.matches.push({ ...packages[i], threats: threats.map(t => ({ ...t })) });
+    }
   }
 
-  return allMatches;
+  if (result.matches.length > 0) {
+    logger.warn('osv', `OSV MATCHES: ${result.matches.length} malicious package entries found!`);
+  } else if (result.status === 'ok') {
+    logger.info('osv', `No OSV malware matches among ${entries.length} unique packages`);
+  }
+  return result;
+}
+
+async function postBatch(queries, timeout) {
+  const res = await http.request(`${OSV_API}/querybatch`, { method: 'POST', body: { queries }, timeout });
+  if (res.status !== 200) throw new Error(`OSV API ${res.status}: ${res.body.replace(/\s+/g, " ").slice(0, 200)}`);
+  const parsed = JSON.parse(res.body);
+  if (!parsed || !Array.isArray(parsed.results)) throw new Error('OSV API returned no results array');
+  return parsed.results;
+}
+
+function collectMalIds(result, entry) {
+  for (const v of ((result && result.vulns) || [])) {
+    if (v.id && v.id.startsWith('MAL-')) entry.malIds.add(v.id);
+  }
+}
+
+// Fetch full advisory records; failures fall back to id-only threats.
+async function fetchDetails(ids, timeout) {
+  const details = new Map();
+  const todo = ids.slice(0, MAX_DETAIL_FETCHES);
+  if (ids.length > todo.length) logger.warn('osv', `Fetching details for first ${todo.length} of ${ids.length} advisories`);
+
+  let next = 0;
+  async function worker() {
+    while (next < todo.length) {
+      const id = todo[next++];
+      try {
+        const res = await http.request(`${OSV_API}/vulns/${encodeURIComponent(id)}`, { timeout });
+        if (res.status === 200) details.set(id, JSON.parse(res.body));
+      } catch (e) {
+        logger.debug('osv', `Detail fetch failed for ${id}: ${e.message}`);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(DETAIL_CONCURRENCY, todo.length) }, worker));
+  return details;
+}
+
+function toThreat(id, vuln) {
+  const v = vuln || {};
+  return {
+    attackType: v.summary || 'Malicious package (OpenSSF)',
+    campaignName: id,
+    catalog: 'osv.dev',
+    source: `https://osv.dev/vulnerability/${id}`,
+    indicators: extractIndicators(v),
+    entryName: id,
+    osvId: id,
+    aliases: v.aliases || [],
+    details: (v.details || '').slice(0, 500),
+  };
 }
 
 function extractIndicators(vuln) {
   const indicators = {};
-  const dbSpecific = vuln.database_specific;
-  if (dbSpecific && dbSpecific['malicious-packages-origins']) {
-    const origins = dbSpecific['malicious-packages-origins'];
-    indicators.sources = origins.map(o => o.source).filter(Boolean);
+  const origins = vuln.database_specific && vuln.database_specific['malicious-packages-origins'];
+  if (Array.isArray(origins)) {
+    const sources = origins.map(o => o.source).filter(Boolean);
+    if (sources.length > 0) indicators.sources = [...new Set(sources)];
     const hashes = origins.map(o => o.sha256).filter(Boolean);
     if (hashes.length > 0) indicators.sha256 = hashes;
   }
   return indicators;
 }
 
-function httpsPost(url, body, timeout = 20000) {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const payload = JSON.stringify(body);
-    const opts = {
-      hostname: parsed.hostname,
-      path: parsed.pathname,
-      method: 'POST',
-      headers: {
-        'User-Agent': 'hiveguard/1.0',
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload),
-      },
-      timeout,
-    };
-    const req = https.request(opts, (res) => {
-      if (res.statusCode !== 200) {
-        let data = '';
-        res.on('data', d => data += d);
-        res.on('end', () => reject(new Error(`OSV API ${res.statusCode}: ${data.slice(0, 200)}`)));
-        return;
-      }
-      let data = '';
-      res.on('data', d => data += d);
-      res.on('end', () => resolve(data));
-    });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('OSV request timed out')); });
-    req.write(payload);
-    req.end();
-  });
-}
-
-module.exports = { queryOsv };
+module.exports = { queryOsv, extractIndicators };

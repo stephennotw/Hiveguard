@@ -27,7 +27,15 @@ function readFileSafe(filePath, opts = {}) {
   }
 }
 
-function readJsonSafe(filePath) {
+// opts.maxBytes: skip (return null) files larger than this, and anything that isn't a regular file.
+function readJsonSafe(filePath, opts = {}) {
+  if (opts.maxBytes) {
+    const st = statSafe(filePath);
+    if (!st || !st.isFile() || st.size > opts.maxBytes) {
+      if (st && st.size > opts.maxBytes) logger.debug('fs-safe', `Skipping oversized JSON ${filePath} (${st.size} bytes)`);
+      return null;
+    }
+  }
   const raw = readFileSafe(filePath);
   if (!raw) return null;
   try {

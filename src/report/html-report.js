@@ -5,6 +5,9 @@
  */
 function generateReport(result) {
   const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const isSafeUrl = (u) => /^https?:\/\//i.test(String(u || ''));
+  // JSON embedded in <script> must not contain "</script>" or raw U+2028/2029
+  const scriptJson = (v) => JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   const meta = result.meta;
   const ti = result.threat_intel;
   const summary = result.summary;
@@ -165,7 +168,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
     }
     for (const [, info] of Object.entries(byAttack)) {
       html += `<div class="alert-match"><div class="attack-name">🎯 ${esc(info.attack)}</div>
-        <div class="attack-meta">Catalog: ${esc(info.catalog)}${info.source ? ` · <a href="${esc(info.source)}" target="_blank" style="color:var(--blue)">Source →</a>` : ''}</div>`;
+        <div class="attack-meta">Catalog: ${esc(info.catalog)}${isSafeUrl(info.source) ? ` · <a href="${esc(info.source)}" target="_blank" rel="noopener noreferrer" style="color:var(--blue)">Source →</a>` : info.source ? ` · Source: ${esc(info.source)}` : ''}</div>`;
       for (const p of info.pkgs) {
         html += `<div class="pkg-name" style="margin-top:.3rem">📦 ${esc(p.name)}@${esc(p.version)} <span style="font-size:.75rem;color:var(--text-dim);font-weight:400">in ${esc(p.project)} (${esc(p.ecosystem)})</span></div>`;
       }
@@ -377,7 +380,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
 
   // ── JAVASCRIPT ──
   html += `<script>
-const P=${JSON.stringify(searchPkgs)};
+const P=${scriptJson(searchPkgs)};
 let ecoF='all';
 function showPanel(n){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));const el=document.getElementById('panel-'+n);if(el)el.classList.add('active');document.querySelectorAll('.nav-item').forEach(i=>{const labels={overview:'📊',search:'🔍',threats:'🛡️',findings:'⚠️',npm:'📦',pypi:'🐍',go:'🔷',extensions:'🔌',mcp:'🔗'};if(i.textContent.includes(labels[n]))i.classList.add('active')})}
 function globalFilter(){const q=document.getElementById('globalSearch').value.toLowerCase();const rows=document.querySelectorAll('#searchTableBody tr');let c=0;rows.forEach(r=>{const s=r.dataset.s;const e=r.dataset.eco;const t=r.classList.contains('threat-row');let em=ecoF==='all'||e===ecoF||(ecoF==='threats'&&t);let tm=!q||s.includes(q);const show=em&&tm;r.style.display=show?'':'none';if(show)c++});document.getElementById('searchCount').textContent=c.toLocaleString()}
@@ -393,7 +396,7 @@ b+='<div class="label">Version</div><div class="value">'+esc(p.ver)+'</div>';
 if(p.user)b+='<div class="label">User</div><div class="value">'+esc(p.user)+'</div>';
 b+='<div class="label">Project</div><div class="value">'+esc(p.proj)+'</div>';
 b+='<div class="label">Source</div><div class="value">'+esc(p.src)+'</div>';
-if(p.res)b+='<div class="label">Resolved</div><div class="value"><a href="'+esc(p.res)+'" target="_blank">'+esc(p.res)+'</a></div>';
+if(p.res)b+='<div class="label">Resolved</div><div class="value">'+(/^https?:\\/\\//i.test(p.res)?'<a href="'+esc(p.res)+'" target="_blank" rel="noopener noreferrer">'+esc(p.res)+'</a>':esc(p.res))+'</div>';
 b+='<div class="label">Status</div><div class="value">'+(p.threat?'<span class="sev sev-critical">COMPROMISED</span>':'<span style="color:var(--green)">✅ Clean</span>')+'</div>';
 b+='</div>';
 const same=P.filter(x=>x.name===p.name&&x.id!==p.id);

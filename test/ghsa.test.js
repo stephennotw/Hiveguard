@@ -1,109 +1,108 @@
 'use strict';
 
-const { describe, it } = require('node:test');
+const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { queryGhsa, versionInRange, compareVersions } = require('../src/threat-intel/ghsa');
+const http = require('../src/threat-intel/http');
+const { queryGhsa, buildAffectsChunks } = require('../src/threat-intel/ghsa');
+
+// Fake GitHub advisories endpoint: returns advisories whose package@version is in `affects`.
+function fakeGithub(advisories, { status = 200 } = {}) {
+  const calls = [];
+  const fn = async (url, opts) => {
+    calls.push({ url, headers: opts.headers });
+    if (status !== 200) return { status, headers: {}, body: '{"message":"rate limited"}' };
+    const u = new URL(url);
+    const affects = new Set(u.searchParams.get('affects').split(','));
+    const eco = u.searchParams.get('ecosystem');
+    const hits = advisories.filter(a => a.vulnerabilities.some(v =>
+      v.package.ecosystem === eco && [...affects].some(x => x === `${v.package.name}@${v._version}`)));
+    return { status: 200, headers: {}, body: JSON.stringify(hits) };
+  };
+  return { fn, calls };
+}
+
+const EVIL_ADVISORY = {
+  ghsa_id: 'GHSA-evil-0001',
+  summary: 'Malware in evil-pkg',
+  html_url: 'https://github.com/advisories/GHSA-evil-0001',
+  vulnerabilities: [{ package: { ecosystem: 'npm', name: 'evil-pkg' }, _version: '1.0.0' }],
+};
 
 describe('ghsa module', () => {
-  describe('compareVersions', () => {
-    it('returns 0 for equal versions', () => {
-      assert.equal(compareVersions('1.2.3', '1.2.3'), 0);
-    });
+  let original;
+  beforeEach(() => { original = http.request; });
+  afterEach(() => { http.request = original; });
 
-    it('returns -1 when a < b', () => {
-      assert.equal(compareVersions('1.2.3', '1.2.4'), -1);
-      assert.equal(compareVersions('1.2.3', '2.0.0'), -1);
-      assert.equal(compareVersions('0.9.0', '1.0.0'), -1);
-    });
-
-    it('returns 1 when a > b', () => {
-      assert.equal(compareVersions('1.2.4', '1.2.3'), 1);
-      assert.equal(compareVersions('2.0.0', '1.9.9'), 1);
-    });
-
-    it('handles versions with different segment counts', () => {
-      assert.equal(compareVersions('1.2', '1.2.0'), 0);
-      assert.equal(compareVersions('1.2.3', '1.2'), 1);
-      assert.equal(compareVersions('1', '1.0.0'), 0);
-    });
-
-    it('strips v-prefix via normalizeVersion', () => {
-      assert.equal(compareVersions('1.2.3', '1.2.3'), 0);
-    });
+  it('returns skipped for empty or null input', async () => {
+    for (const input of [[], null]) {
+      const r = await queryGhsa(input, { token: 't' });
+      assert.equal(r.status, 'skipped');
+      assert.deepEqual(r.matches, []);
+    }
   });
 
-  describe('versionInRange', () => {
-    it('matches <= range', () => {
-      assert.equal(versionInRange('1.0.0', '<= 9999.0.0'), true);
-      assert.equal(versionInRange('1.0.0', '<= 0.9.0'), false);
-    });
-
-    it('matches < range', () => {
-      assert.equal(versionInRange('1.0.0', '< 2.0.0'), true);
-      assert.equal(versionInRange('2.0.0', '< 2.0.0'), false);
-    });
-
-    it('matches = range', () => {
-      assert.equal(versionInRange('1.0.0', '= 1.0.0'), true);
-      assert.equal(versionInRange('1.0.1', '= 1.0.0'), false);
-    });
-
-    it('matches >= range', () => {
-      assert.equal(versionInRange('2.0.0', '>= 1.0.0'), true);
-      assert.equal(versionInRange('0.9.0', '>= 1.0.0'), false);
-    });
-
-    it('matches compound ranges', () => {
-      assert.equal(versionInRange('1.5.0', '>= 1.0.0, <= 2.0.0'), true);
-      assert.equal(versionInRange('3.0.0', '>= 1.0.0, <= 2.0.0'), false);
-      assert.equal(versionInRange('0.5.0', '>= 1.0.0, <= 2.0.0'), false);
-    });
-
-    it('returns true for empty/null range (assume affected)', () => {
-      assert.equal(versionInRange('1.0.0', ''), true);
-      assert.equal(versionInRange('1.0.0', null), true);
-    });
-
-    it('returns true for unparseable range (assume affected)', () => {
-      assert.equal(versionInRange('1.0.0', 'all versions'), true);
-    });
+  it('skips without a token and makes no requests', async () => {
+    const fake = fakeGithub([EVIL_ADVISORY]);
+    http.request = fake.fn;
+    const r = await queryGhsa([{ ecosystem: 'npm', name: 'evil-pkg', version: '1.0.0' }], { token: '' });
+    assert.equal(r.status, 'skipped');
+    assert.match(r.error, /GITHUB_TOKEN/);
+    assert.equal(fake.calls.length, 0);
   });
 
-  describe('queryGhsa', () => {
-    it('returns empty for empty package list', async () => {
-      const result = await queryGhsa([]);
-      assert.deepEqual(result, []);
-    });
+  it('matches only the affected version and reports every project that has it', async () => {
+    const fake = fakeGithub([EVIL_ADVISORY]);
+    http.request = fake.fn;
+    const r = await queryGhsa([
+      { ecosystem: 'npm', name: 'evil-pkg', version: '1.0.0', project: 'A' },
+      { ecosystem: 'npm', name: 'evil-pkg', version: '1.0.0', project: 'B' },
+      { ecosystem: 'npm', name: 'evil-pkg', version: '2.0.0', project: 'C' },
+      { ecosystem: 'npm', name: 'express', version: '4.21.0', project: 'A' },
+    ], { token: 't' });
+    assert.equal(r.status, 'ok');
+    assert.deepEqual(r.matches.map(m => m.project).sort(), ['A', 'B']);
+    assert.equal(r.matches[0].threats[0].ghsaId, 'GHSA-evil-0001');
+    assert.equal(fake.calls[0].headers.Authorization, 'Bearer t');
+    assert.match(fake.calls[0].url, /type=malware/);
+  });
 
-    it('returns empty for null input', async () => {
-      const result = await queryGhsa(null);
-      assert.deepEqual(result, []);
-    });
+  it('never sends non-concrete versions', async () => {
+    const fake = fakeGithub([]);
+    http.request = fake.fn;
+    const r = await queryGhsa([
+      { ecosystem: 'pypi', name: 'requests', version: '>=2.0' },
+      { ecosystem: 'pypi', name: 'flask', version: '' },
+    ], { token: 't' });
+    assert.equal(fake.calls.length, 0);
+    assert.equal(r.status, 'skipped');
+  });
 
-    it('skips packages with unmapped ecosystems', async () => {
-      const result = await queryGhsa([
-        { ecosystem: 'unknown-eco', name: 'test', version: '1.0.0' },
+  it('reports failed status when GitHub rejects the request', async () => {
+    http.request = fakeGithub([], { status: 403 }).fn;
+    const r = await queryGhsa([{ ecosystem: 'npm', name: 'evil-pkg', version: '1.0.0' }], { token: 't' });
+    assert.equal(r.status, 'failed');
+    assert.match(r.error, /403/);
+  });
+
+  describe('buildAffectsChunks', () => {
+    it('never puts the same package name twice in one chunk', () => {
+      const chunks = buildAffectsChunks([
+        { name: 'lodash', version: '1.0.0' },
+        { name: 'Lodash', version: '2.0.0' },
+        { name: 'express', version: '4.0.0' },
       ]);
-      assert.deepEqual(result, []);
-    });
-
-    it('gracefully handles API failure', async () => {
-      const result = await queryGhsa([
-        { ecosystem: 'npm', name: 'express', version: '4.21.0' },
-      ], { timeout: 5000 });
-      assert.ok(Array.isArray(result));
-    });
-
-    it('queries GitHub Advisory DB for npm packages (network)', async (t) => {
-      const result = await queryGhsa([
-        { ecosystem: 'npm', name: 'express', version: '4.21.0' },
-      ], { timeout: 15000 });
-
-      if (!Array.isArray(result)) {
-        t.skip('GitHub API unreachable');
-        return;
+      for (const c of chunks) {
+        const names = c.map(e => e.name.toLowerCase());
+        assert.equal(new Set(names).size, names.length);
       }
-      assert.ok(Array.isArray(result));
+      assert.equal(chunks.flat().length, 3);
+    });
+
+    it('caps chunk size at 100 entries', () => {
+      const entries = Array.from({ length: 250 }, (_, i) => ({ name: `p${i}`, version: '1.0.0' }));
+      const chunks = buildAffectsChunks(entries);
+      assert.ok(chunks.every(c => c.length <= 100));
+      assert.equal(chunks.flat().length, 250);
     });
   });
 });

