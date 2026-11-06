@@ -85,14 +85,15 @@ add();
 add('AI on this machine (tool folder names, provider and SDK names only)');
 const ecos = result.ecosystems || {};
 const mcpCfgs = (ecos.mcp_configs && ecos.mcp_configs.configs) || [];
-const servers = mcpCfgs.flatMap(c => c.servers.map(s => ({ app: c.app || c.config_name, ...s })));
+const allServers = mcpCfgs.flatMap(c => c.servers.map(s => ({ app: c.app || c.config_name, state: c.state, dir: (c.relative_dir || '').split('/')[0], ...s })));
+const servers = allServers.filter(s => s.active !== false);
 const knownApps = (ecos.ai_apps && ecos.ai_apps.apps) || [];
 add(`  known AI apps present: ${new Set(knownApps.map(a => a.id)).size}`);
 for (const [k, v] of count(knownApps, a => `${a.name} [${a.kind}]`)) add(`    ${String(v).padStart(4)} x ${k}`);
-add(`  MCP servers: ${servers.length} (${servers.filter(s => s.unpinned).length} unpinned, ${servers.filter(s => s.wrapped_by).length} behind a wrapper)`);
+add(`  MCP servers configured: ${servers.length} (${servers.filter(s => s.unpinned).length} unpinned, ${servers.filter(s => s.wrapped_by).length} behind a wrapper); not counted: ${allServers.filter(s => s.state === 'available').length} available in catalogs, ${allServers.filter(s => s.disabled).length} disabled`);
 for (const [k, v] of count(servers.filter(s => s.wrapped_by), s => s.wrapped_by)) add(`    wrapper ${k}: ${v} server(s)`);
 const byApp = new Map();
-for (const c of mcpCfgs) {
+for (const c of mcpCfgs.filter(x => x.state !== 'available')) {
   if (!c.server_count) continue;
   const app = c.app || c.config_name;
   const e = byApp.get(app) || { configs: 0, servers: 0, names: new Set(), files: new Set() };
@@ -106,7 +107,8 @@ for (const [app, e] of [...byApp.entries()].sort((a, b) => b[1].servers - a[1].s
   add(`    ${String(e.servers).padStart(4)} x ${app} (${e.configs} config file(s): ${[...e.files].join(', ')}; ${e.names.size} distinct server names)`);
 }
 const editorsFound = (ecos.editor_extensions && ecos.editor_extensions.discovered_editors) || [];
-if (editorsFound.length) add(`  editors found by structure: ${editorsFound.join(', ')}`);
+if (editorsFound.length) for (const [k, v] of count(allServers.filter(s => s.state === 'available'), s => `${s.app} under ${s.dir || '(top)'}/`)) add(`    available (catalog): ${String(v).padStart(3)} x ${k}`);
+add(`  editors found by structure: ${editorsFound.join(', ')}`);
 const am = ecos.ai_models || {};
 add(`  local models: ${am.total || 0} (${((am.total_size || 0) / 1073741824).toFixed(1)} GB, ${am.pickle_count || 0} pickle-format)`);
 for (const [k, v] of count(am.models || [], m => `${m.store || 'loose file'}: ${m.format}`)) add(`    ${String(v).padStart(4)} x ${k}`);

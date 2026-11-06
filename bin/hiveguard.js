@@ -692,7 +692,7 @@ function buildFlatPackageList(scanResults, userHomes) {
   // MCP servers started from a pinned package version can be threat-matched like any dependency
   for (const cfg of (scanResults.mcp_configs.configs || [])) {
     for (const srv of (cfg.servers || [])) {
-      if (!srv.package || !srv.package_version) continue;
+      if (!srv.active || !srv.package || !srv.package_version) continue;
       packages.push({
         ecosystem: srv.package_ecosystem, name: srv.package, version: srv.package_version,
         user: resolveUser(cfg.config_path, userHomes),

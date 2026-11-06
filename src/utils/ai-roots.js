@@ -17,6 +17,16 @@ const NOISE_DIR = /(cache|^logs?$|crash|gpu|indexeddb|local storage|session stor
 
 // Configs sit near the top of an app folder (deepest known: User/globalStorage/<ext>/settings/),
 // so a shallow breadth-first walk with small budgets finds them without crawling big app trees.
+// Folders holding catalogs of things a tool *could* use (plugin/connector caches,
+// marketplaces, templates), as opposed to what it is configured to use.
+const CATALOG_SEGMENT = /^(plugins?|\.?cache|caches|marketplaces?|connectors?|registry|catalogs?|templates?|examples?|samples?|vendor|bundled|\.?tmp|temp)$/i;
+
+/** True for paths inside a dot-folder's catalog, e.g. ~/.tool/plugins/<name>/. */
+function inToolCatalog(p) {
+  const segs = path.resolve(p).split(path.sep);
+  return segs.some((seg, i) => seg.startsWith('.') && segs.slice(i + 1).some(s => CATALOG_SEGMENT.test(s)));
+}
+
 const MAX_DEPTH = 4;
 const MAX_DIRS_PER_ROOT = 60;
 const MAX_DIRS_TOTAL = 4000;
@@ -58,17 +68,17 @@ function agentRoots(platform) {
  * Candidate MCP/agent config files under the roots, chosen by file name and position,
  * never by product: *mcp*.json/.toml anywhere (bounded), editor User/settings.json,
  * a dot-folder's top-level settings.json / config.toml / config.json, Claude Desktop's
- * config, and ~/.claude.json. Returns [{ path, label, home }]; stats (optional) receives
+ * config, and ~/.claude.json. Returns [{ path, label, home, root }]; stats (optional) receives
  * { roots, dirs_visited, roots_over_budget }.
  */
 function mcpCandidates(platform, roots = agentRoots(platform), stats = {}) {
   const out = [];
-  const add = (p, label, home) => out.push({ path: p, label, home });
+  const add = (p, label, home, root) => out.push({ path: p, label, home, root });
 
   for (const home of (platform.userHomes || [])) {
     const claudeJson = path.join(home, '.claude.json');
     const st = statSafe(claudeJson);
-    if (st && st.isFile()) add(claudeJson, 'claude', home);
+    if (st && st.isFile()) add(claudeJson, 'claude', home, home);
   }
 
   stats.roots = roots.length;
@@ -100,7 +110,7 @@ function mcpCandidates(platform, roots = agentRoots(platform), stats = {}) {
         const isEditorSettings = name === 'settings.json' && path.basename(dir).toLowerCase() === 'user';
         const isDotTopConfig = depth === 0 && root.kind === 'dot' && /^(settings\.json|config\.toml|config\.json)$/.test(name);
         const isDesktopConfig = name === 'claude_desktop_config.json';
-        if (isMcpNamed || isEditorSettings || isDotTopConfig || isDesktopConfig) add(full, root.label, root.home);
+        if (isMcpNamed || isEditorSettings || isDotTopConfig || isDesktopConfig) add(full, root.label, root.home, root.dir);
       }
     }
   }
@@ -123,4 +133,4 @@ function editorForks(platform, roots = agentRoots(platform)) {
   return forks;
 }
 
-module.exports = { agentRoots, mcpCandidates, editorForks };
+module.exports = { agentRoots, mcpCandidates, editorForks, CATALOG_SEGMENT, inToolCatalog };

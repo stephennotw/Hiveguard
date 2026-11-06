@@ -5,6 +5,7 @@ const path = require('path');
 const { readFileSafe, readdirSafe, statSafe, findProjectDirs } = require('../utils/fs-safe');
 const logger = require('../utils/logger');
 const { scanHidden, sanitizeExcerpt } = require('../utils/text');
+const { inToolCatalog } = require('../utils/ai-roots');
 
 const SCANNER_ID = 'ai-instructions';
 const MAX_FILE_BYTES = 64 * 1024;
@@ -80,7 +81,8 @@ const SUSPICIOUS_PATTERNS = [
 
 // projectDirs: optional [{ dir }] from the shared directory walk.
 function scan(platform, opts = {}, projectDirs) {
-  const dirs = projectDirs || findProjectDirs(platform.projectRoots || [], { maxDepth: opts.maxDepth || 4 });
+  // A tool's own catalog folders (e.g. ~/.tool/plugins/<name>) are not the user's projects.
+  const dirs = (projectDirs || findProjectDirs(platform.projectRoots || [], { maxDepth: opts.maxDepth || 4 })).filter(d => !inToolCatalog(d.dir));
   const findings = [];
   const inventory = [];
   const seen = new Set();

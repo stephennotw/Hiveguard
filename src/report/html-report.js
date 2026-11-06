@@ -369,7 +369,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<div class="panel" id="panel-mcp"><h2 style="color:#fff;margin-bottom:1rem">🔗 MCP Configs</h2>`;
   for (const cfg of (ecosystems.mcp_configs?.configs || [])) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-      <h3>${esc(cfg.app || cfg.config_name)}${cfg.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(cfg.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${cfg.server_count} servers</span>
+      <h3>${esc(cfg.app || cfg.config_name)}${cfg.state === 'available' ? ' <span style="font-size:.7rem;color:var(--text-dim);font-weight:400">(catalog — available, not configured)</span>' : ''}${cfg.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(cfg.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${cfg.server_count} servers</span>
     </div><div class="card-body">`;
     for (const srv of (cfg.servers || [])) {
       html += `<div class="mcp-entry"><div class="name">${esc(srv.name)}</div>
@@ -388,7 +388,8 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
     const card = (title, badge, body) => `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')"><h3>${title}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${badge}</span></div><div class="card-body">${body}</div></div>`;
     const empty = (t) => `<p style="color:var(--text-dim);font-size:.8rem">${t}</p>`;
     const table = (head, rows) => `<table><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
-    const mcpCfgs = (ecosystems.mcp_configs?.configs || []).filter(c => c.server_count > 0);
+    const mcpCfgs = (ecosystems.mcp_configs?.configs || []).filter(c => c.servers.some(s => s.active !== false));
+    const mcpInactive = (ecosystems.mcp_configs?.available_servers || 0) + (ecosystems.mcp_configs?.disabled_servers || 0);
     const models = ecosystems.ai_models || {};
     const usage = ecosystems.ai_usage || {};
     const editors = ecosystems.editor_extensions?.discovered_editors || [];
@@ -402,7 +403,9 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
       : table(['App', 'Kind', 'User', 'Found at'], knownApps.map(a => `<tr><td>${esc(a.name)}</td><td>${esc(a.kind)}</td><td>${esc(a.user)}</td><td style="font-size:.7rem;word-break:break-all">${a.evidence.map(esc).join('<br>')}</td></tr>`)));
 
     html += card('🔗 MCP servers', `${ecosystems.mcp_configs?.total_servers || 0} servers in ${mcpCfgs.length} configs`, mcpCfgs.length === 0 ? empty('No MCP servers configured.')
-      : table(['App', 'Server', 'Runs', 'Notes'], mcpCfgs.flatMap(c => c.servers.map(s => `<tr><td>${esc(c.app || c.config_name)}</td><td>${esc(s.name)}${s.project ? `<div style="font-size:.65rem;color:var(--text-dim)">${esc(s.project)}</div>` : ''}</td><td style="font-size:.72rem">${s.package ? `${esc(s.package)}@${esc(s.package_version || 'unpinned')}` : esc(s.command || s.url || '')}</td><td style="font-size:.7rem">${[compromised.has(`${s.package_ecosystem}:${s.package}@${s.package_version}`) ? '<span class="sev sev-critical">known malicious</span>' : '', s.unpinned ? '<span class="sev sev-medium">unpinned</span>' : '', s.has_credentials ? 'credentials in env' : '', s.wrapped_by ? `via ${esc(s.wrapped_by)}` : ''].filter(Boolean).join(' ') || '—'}</td></tr>`))));
+      : table(['App', 'Server', 'Runs', 'Notes'], mcpCfgs.flatMap(c => c.servers.filter(s => s.active !== false).map(s => `<tr><td>${esc(c.app || c.config_name)}</td><td>${esc(s.name)}${s.project ? `<div style="font-size:.65rem;color:var(--text-dim)">${esc(s.project)}</div>` : ''}</td><td style="font-size:.72rem">${s.package ? `${esc(s.package)}@${esc(s.package_version || 'unpinned')}` : esc(s.command || s.url || '')}</td><td style="font-size:.7rem">${[compromised.has(`${s.package_ecosystem}:${s.package}@${s.package_version}`) ? '<span class="sev sev-critical">known malicious</span>' : '', s.unpinned ? '<span class="sev sev-medium">unpinned</span>' : '', s.has_credentials ? 'credentials in env' : '', s.wrapped_by ? `via ${esc(s.wrapped_by)}` : ''].filter(Boolean).join(' ') || '—'}</td></tr>`))));
+
+    if (mcpInactive > 0) html += `<p style="color:var(--text-dim);font-size:.75rem;margin:-.5rem 0 1rem">Not counted: ${ecosystems.mcp_configs.available_servers || 0} servers listed in catalogs/caches (available, not configured) and ${ecosystems.mcp_configs.disabled_servers || 0} disabled. All are listed in the MCP panel.</p>`;
 
     html += card('🧠 Local models', `${models.total || 0} models, ${fmtBytes(models.total_size)}${models.pickle_count ? `, ${models.pickle_count} pickle-format` : ''}`, (models.models || []).length === 0 ? empty('No local model files found.')
       : '<p style="color:var(--text-dim);font-size:.75rem;margin-bottom:.5rem">Pickle-format models (PyTorch .pt/.ckpt/.bin) can run code when loaded; prefer safetensors or GGUF from untrusted sources.</p>'

@@ -19,6 +19,8 @@
   ],
   "git_hooks": [],
   "mcp_servers": [
+    "[available] codex: calendar -> npm:calendar-mcp@unpinned",
+    "[disabled] codex: old -> npm:old-mcp@unpinned",
     "brandnew-agent: files -> npm:files-mcp-server@unpinned",
     "brandnew-agent: ipc -> npm:node-ipc@9.2.3",
     "claude: db (/work/bot) -> https://db.example/mcp",

@@ -127,6 +127,14 @@ module.exports = [
       b.json(`${app}/node_modules/bun/package.json`, { name: 'bun', version: '1.4.4', scripts: { postinstall: 'node install.js' } });
       b.file(`${app}/node_modules/bun/install.js`, BUN_INSTALL_JS);
       b.json(`${app}/node_modules/left-pad/package.json`, { name: 'left-pad', version: '1.3.0' });
+      // npm's hidden lockfile, as written on install (marks packages with install scripts)
+      b.json(`${app}/node_modules/.package-lock.json`, { name: 'webapp', lockfileVersion: 3, requires: true, packages: {
+        'node_modules/esbuild': { version: '0.24.0', hasInstallScript: true },
+        'node_modules/core-js': { version: '3.39.0', hasInstallScript: true },
+        'node_modules/bun': { version: '1.4.4', hasInstallScript: true },
+        'node_modules/husky': { version: '9.1.7' },
+        'node_modules/left-pad': { version: '1.3.0' },
+      } });
       b.file(`${app}/.git/HEAD`, 'ref: refs/heads/main\n');
       b.file(`${app}/.git/config`, '[core]\n\trepositoryformatversion = 0\n\thooksPath = .husky/_\n');
       b.file(`${app}/.git/hooks/pre-commit.sample`, '#!/bin/sh\nexit 0\n');
@@ -254,7 +262,9 @@ module.exports = [
         files: { command: 'npx', args: ['-y', 'files-mcp-server'] },
         ipc: { command: 'npx', args: ['-y', 'node-ipc@9.2.3'] },
       } });
-      b.file(`${h}/.codex/config.toml`, 'model = "o4"\n\n[mcp_servers.fetch]\ncommand = "uvx"\nargs = ["mcp-server-fetch==2025.4.7"]\n');
+      b.file(`${h}/.codex/config.toml`, 'model = "o4"\n\n[mcp_servers.fetch]\ncommand = "uvx"\nargs = ["mcp-server-fetch==2025.4.7"]\n\n[mcp_servers.old]\ncommand = "npx"\nargs = ["-y", "old-mcp"]\nenabled = false\n');
+      // Connector catalog cache: servers the tool could offer, not configured ones
+      b.json(`${h}/.codex/plugins/calendar-connector/.mcp.json`, { mcpServers: { calendar: { command: 'npx', args: ['-y', 'calendar-mcp'] } } });
       b.json(`${h}/.claude.json`, { numStartups: 3, projects: { '/work/bot': { mcpServers: { db: { type: 'http', url: 'https://db.example/mcp' } } } } });
       b.file(`${h}/.newfork/extensions/extensions.json`, '[]');
       b.json(`${h}/.newfork/extensions/acme.ai-helper-1.2.0/package.json`, { name: 'ai-helper', publisher: 'acme', version: '1.2.0', engines: { vscode: '^1.90.0' } });

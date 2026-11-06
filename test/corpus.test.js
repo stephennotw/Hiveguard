@@ -100,7 +100,7 @@ function summarize(result, exitCode, usersRoot) {
     threat_matches: (result.threat_matches || []).map(m => `${m.ecosystem}:${m.name}@${m.version}`),
     findings,
     git_hooks: eco.git_hooks.findings.map(f => `${f.severity} ${rel(f.path)} (${f.origin}) ${triggers(f)}${f.content_not_read ? ' not-read' : ''}`),
-    mcp_servers: (eco.mcp_configs.configs || []).flatMap(c => c.servers.map(s => `${c.app}: ${s.name}${s.project ? ` (${rel(s.project)})` : ''} -> ${s.package ? `${s.package_ecosystem}:${s.package}@${s.package_version || 'unpinned'}` : (s.command || s.url)}`)),
+    mcp_servers: (eco.mcp_configs.configs || []).flatMap(c => c.servers.map(s => `${c.state === 'available' ? '[available] ' : ''}${s.disabled ? '[disabled] ' : ''}${c.app}: ${s.name}${s.project ? ` (${rel(s.project)})` : ''} -> ${s.package ? `${s.package_ecosystem}:${s.package}@${s.package_version || 'unpinned'}` : (s.command || s.url)}`)),
     models: (eco.ai_models.models || []).map(m => `${m.store || '-'} ${m.name || rel(m.path)} [${m.format}]${m.pickle ? ' pickle' : ''}${m.content_not_read ? ' not-read' : ''}`),
     ai_credentials: (eco.ai_usage.providers || []).map(p => `${p.provider} ${p.source} ${p.variable || 'key-format'} ${rel(p.path)}`),
     ai_sdks: (eco.ai_usage.sdks || []).map(s => `${s.ecosystem}:${s.name} ${s.versions.join(',')} x${s.projects}`),

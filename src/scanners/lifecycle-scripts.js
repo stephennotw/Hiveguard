@@ -56,16 +56,43 @@ const FILE_PATTERNS = [
   { pattern: /\.(ssh|aws)[\\/]|\bid_rsa\b|\.npmrc\b/, label: 'credential-file-access', severity: 'medium' },
 ];
 
-// A "curl ... | sh" pipeline needs a shell. In JavaScript it only runs if the file can
-// reach one; otherwise it is text, e.g. bun's install.js puts its installer command in an
-// Error message and only spawnSync()s binaries without a shell.
+// A "curl ... | sh" pipeline needs a shell. In JavaScript the text only matters if it
+// flows into a shell call; bun's install.js, for example, keeps its installer command in a
+// variable used only in an Error message, while also spawning powershell for an unrelated
+// CPU check. Without data-flow analysis, two cheap checks: a shell call close to the text,
+// or the variable the text is assigned to appearing in a shell call's arguments.
 const SHELL_SINKS = [
-  /\bexec(Sync)?\s*\(/,
-  /\bshell\s*:\s*(true|['"])/,
-  /\b(spawn|spawnSync|execFile|execFileSync)\s*\(\s*['"`]((ba|z)?sh|cmd(\.exe)?|powershell(\.exe)?|pwsh)['"`]/,
-  /\beval\s*\(|\bnew\s+Function\s*\(/,
+  /(^|[^.\w])exec\s*\(|\.execSync\s*\(|(^|[^.\w])execSync\s*\(|\b(child_?process|childProcess|cp|import_child_process(\.default)?)\.exec\s*\(/gi,
+  /\bshell\s*:\s*(true|['"])/g,
+  /\b(spawn|spawnSync|execFile|execFileSync)\s*\(\s*['"`]((ba|z)?sh|cmd(\.exe)?|powershell(\.exe)?|pwsh)['"`]/g,
+  /\beval\s*\(|\bnew\s+Function\s*\(/g,
 ];
+const PIPE_TO_SHELL = /\b(curl|wget)\b[^\n]{0,200}\|\s*(bash|sh)\b/g;
+const SINK_WINDOW_BEFORE = 400;
+const SINK_WINDOW_AFTER = 200;
 const SHELL_PIPE_LABELS = new Set(['pipe-to-shell']);
+
+// True when identifier appears as a whole word in text.
+function usesIdentifier(text, identifier) {
+  const escaped = identifier.replace(/[$]/g, '\\$');
+  return new RegExp('(^|[^\\w$])' + escaped + '($|[^\\w$])').test(text);
+}
+
+function shellPipeReachesShell(content) {
+  const sinks = [];
+  for (const re of SHELL_SINKS) for (const m of content.matchAll(re)) sinks.push(m.index);
+  if (sinks.length === 0) return false;
+  for (const m of content.matchAll(PIPE_TO_SHELL)) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (sinks.some(i => i >= start - SINK_WINDOW_BEFORE && i <= end + SINK_WINDOW_AFTER)) return true;
+    const lineStart = content.lastIndexOf('\n', start) + 1;
+    const assigned = content.slice(lineStart, start).match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=|\b([A-Za-z_$][\w$]*)\s*=\s*[^=]/);
+    const name = assigned && (assigned[1] || assigned[2]);
+    if (name && sinks.some(i => usesIdentifier(content.slice(i, i + 300).split(';')[0], name))) return true;
+  }
+  return false;
+}
 
 // Install-hook payload filenames from Shai-Hulud / Mini Shai-Hulud style worms
 const KNOWN_IOC_FILES = new Set(['setup_bun.js', 'bun_environment.js', 'router_runtime.js']);
@@ -79,7 +106,7 @@ const SCRIPT_FILE_REF = /\b(?:node|bun|deno|sh|bash)\s+(?:-{1,2}[\w-]+(?:=\S+)?\
 function scan(platform, opts = {}, npmProjects) {
   const projects = npmProjects || [];
   const findings = [];
-  const stats = { packagesScanned: 0, linksResolved: 0, seen: new Set() };
+  const stats = { packagesScanned: 0, linksResolved: 0, packageJsonReads: 0, hiddenLockfiles: 0, seen: new Set() };
   timing.reset();
 
   for (const proj of projects) {
@@ -92,12 +119,12 @@ function scan(platform, opts = {}, npmProjects) {
       findings.push(...checkScripts(projPkgJson.scripts, projPkgJson.name || path.basename(projectDir), project, projectDir));
     }
     const root = realpathOr(projectDir);
-    scanNodeModules(path.join(projectDir, 'node_modules'), { project, root, findings, stats }, 0, path.join(root, 'node_modules'));
+    scanNodeModulesRoot(path.join(projectDir, 'node_modules'), { project, root, findings, stats }, path.join(root, 'node_modules'));
   }
 
   for (const nmDir of globalNodeModulesDirs(platform)) {
     const root = realpathOr(nmDir);
-    scanNodeModules(nmDir, { project: '(global)', root, findings, stats }, 0, root);
+    scanNodeModulesRoot(nmDir, { project: '(global)', root, findings, stats }, root);
   }
 
   if (findings.length > 0) {
@@ -111,6 +138,8 @@ function scan(platform, opts = {}, npmProjects) {
     packages_scanned: stats.packagesScanned,
     projects_scanned: projects.length,
     links_resolved: stats.linksResolved,
+    package_json_reads: stats.packageJsonReads,
+    hidden_lockfiles_used: stats.hiddenLockfiles,
     // Where the time went, for diagnosing slow endpoints (milliseconds).
     timing_ms: timing.snapshot(),
     total_findings: findings.length,
@@ -128,6 +157,53 @@ function globalNodeModulesDirs(platform) {
     for (const c of candidates) if (existsSafe(c)) dirs.add(c);
   }
   return [...dirs];
+}
+
+const MAX_HIDDEN_LOCKFILE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * npm (7+) writes node_modules/.package-lock.json on every install, from the packages it
+ * actually installed, marking those with install scripts (hasInstallScript). When it is
+ * present and not older than node_modules, only those packages' package.json files need
+ * reading — on Windows endpoints each file open costs ~25 ms of antivirus scanning, so this
+ * is the difference between seconds and minutes. The committed package-lock.json is not
+ * used for this: a repository could ship one without the flags.
+ * Falls back to walking node_modules (yarn, pnpm, older npm, or a stale hidden lockfile).
+ */
+function scanNodeModulesRoot(nmDir, ctx, realNm) {
+  const hidden = path.join(nmDir, '.package-lock.json');
+  const hiddenStat = statSafe(hidden);
+  const nmStat = hiddenStat && statSafe(nmDir);
+  if (hiddenStat && nmStat && hiddenStat.mtimeMs + 1000 >= nmStat.mtimeMs) {
+    const data = readJsonSafe(hidden, { maxBytes: MAX_HIDDEN_LOCKFILE_BYTES });
+    if (data && data.packages && typeof data.packages === 'object') {
+      ctx.stats.hiddenLockfiles++;
+      scanFromHiddenLockfile(data.packages, path.dirname(nmDir), ctx);
+      return;
+    }
+  }
+  scanNodeModules(nmDir, ctx, 0, realNm);
+}
+
+function scanFromHiddenLockfile(packages, baseDir, ctx) {
+  const base = path.resolve(baseDir);
+  for (const [rel, info] of Object.entries(packages)) {
+    if (!rel || !info || typeof info !== 'object' || info.link) continue; // a link's target has its own entry
+    const pkgPath = path.resolve(base, ...rel.split('/'));
+    if (!pkgPath.startsWith(base + path.sep)) continue;
+    if (ctx.stats.seen.has(pkgPath)) continue;
+    ctx.stats.seen.add(pkgPath);
+    ctx.stats.packagesScanned++;
+    if (!info.hasInstallScript) continue;
+    const name = info.name || rel.split('node_modules/').pop();
+    const pkgJson = readPackageJson(pkgPath, ctx);
+    if (pkgJson && pkgJson.scripts) ctx.findings.push(...checkScripts(pkgJson.scripts, pkgJson.name || name, ctx.project, pkgPath));
+  }
+}
+
+function readPackageJson(pkgDir, ctx) {
+  ctx.stats.packageJsonReads++;
+  return timing.measure('read_package_json', () => readJsonSafe(path.join(pkgDir, 'package.json'), { maxBytes: MAX_PACKAGE_JSON_BYTES }));
 }
 
 /**
@@ -174,7 +250,7 @@ function scanPackageDir(pkgPath, dirent, pkgName, ctx, depth, realGuess) {
   ctx.stats.seen.add(r.real);
 
   ctx.stats.packagesScanned++;
-  const pkgJson = timing.measure('read_package_json', () => readJsonSafe(path.join(pkgPath, 'package.json'), { maxBytes: MAX_PACKAGE_JSON_BYTES }));
+  const pkgJson = readPackageJson(pkgPath, ctx);
   if (pkgJson && pkgJson.scripts) {
     ctx.findings.push(...checkScripts(pkgJson.scripts, pkgJson.name || pkgName, ctx.project, pkgPath));
   }
@@ -305,7 +381,7 @@ function inspectScriptFile(absPath, relPath) {
   const content = readFileSafe(absPath, { maxBytes: MAX_SCRIPT_FILE_BYTES });
   if (!content) return hits;
   let fileHits = matchPatterns(FILE_PATTERNS, content);
-  if (/\.(c?js|mjs|ts)$/i.test(absPath) && !SHELL_SINKS.some(re => re.test(content))) {
+  if (/\.(c?js|mjs|ts)$/i.test(absPath) && !shellPipeReachesShell(content)) {
     fileHits = fileHits.filter(h => !SHELL_PIPE_LABELS.has(h.label));
   }
   hits.push(...fileHits);

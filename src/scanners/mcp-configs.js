@@ -8,6 +8,7 @@ const logger = require('../utils/logger');
 const SCANNER_ID = 'mcp-configs';
 const MAX_CONFIG_BYTES = 20 * 1024 * 1024; // ~/.claude.json grows with history
 const CRED_KEY = /api.?key|token|secret|password|auth|credential/i;
+const { CATALOG_SEGMENT } = require('../utils/ai-roots');
 
 /**
  * MCP (Model Context Protocol) server configurations, recognised by structure rather
@@ -50,16 +51,21 @@ function scan(platform, opts = {}, candidates = []) {
     if (entries.length === 0 && !src.fixed) continue;
 
     const servers = entries.map(({ name, cfg, scope }) => describeServer(name, cfg, scope));
+    const relativeDir = src.root ? path.relative(src.root, path.dirname(src.path)).split(path.sep).filter(Boolean) : [];
+    const state = relativeDir.some(seg => CATALOG_SEGMENT.test(seg)) ? 'available' : 'configured';
+    for (const s of servers) s.active = state === 'configured' && !s.disabled;
     configs.push({
       config_path: src.path,
       config_name: path.basename(path.dirname(src.path)),
       app: src.label,
+      state,
+      relative_dir: relativeDir.join('/'),
       server_count: servers.length,
       servers,
     });
 
     for (const s of servers) {
-      if (s.unpinned) {
+      if (s.unpinned && s.active) {
         findings.push({
           severity: 'medium',
           type: 'mcp_server_risk',
@@ -80,7 +86,11 @@ function scan(platform, opts = {}, candidates = []) {
     ecosystem: SCANNER_ID,
     configs,
     total_configs: configs.length,
-    total_servers: configs.reduce((s, c) => s + c.server_count, 0),
+    // Servers a tool is configured to run; catalog entries and disabled servers are listed
+    // in configs but not counted, flagged, or threat-matched.
+    total_servers: configs.reduce((s, c) => s + c.servers.filter(v => v.active).length, 0),
+    available_servers: configs.filter(c => c.state === 'available').reduce((s, c) => s + c.server_count, 0),
+    disabled_servers: configs.reduce((s, c) => s + c.servers.filter(v => v.disabled).length, 0),
     findings,
     io: { ...io, read_parse_ms: Math.round(io.read_parse_ms) },
   };
@@ -166,6 +176,7 @@ function describeServer(name, cfg, scope) {
     has_credentials: envKeys.some(k => CRED_KEY.test(k)),
   };
   if (scope) server.project = scope;
+  if (cfg.disabled === true || cfg.enabled === false) server.disabled = true;
   let pkg = packageSpec(server.command, args);
   if (!pkg && server.command) {
     // Wrapped servers (security proxies, launchers): "<wrapper> [opts] [--] npx -y foo".

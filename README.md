@@ -222,6 +222,8 @@ Note: Threat intel catalogs are loaded into memory at runtime — no disk cache 
 | **Git Hooks** | Custom and suspicious hooks, including `core.hooksPath` (repo and global) and symlinks leaving the repo | `.git/hooks`, `.git/config`, `~/.gitconfig` |
 | **AI Assistant Files** | Instruction/config files read by AI coding tools: prompt injection, hidden Unicode, exfiltration instructions, auto-run VS Code tasks, Claude Code hook commands | `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `.cursor/rules/`, `.github/copilot-instructions.md`, `.claude/settings.json`, `.vscode/tasks.json`, … (project and user level) |
 
+For npm projects, the install-script check reads only the packages npm itself marked as having install scripts in `node_modules/.package-lock.json` (written locally on every install, so a repository cannot forge it); other projects are walked in full. A `curl … | sh` string in a JavaScript file only counts when it reaches a shell call.
+
 Install-script, git-hook and AI-file excerpts in the output are attacker-controlled text; invisible and control characters are stripped from them.
 
 ## AI on This Machine
@@ -230,7 +232,7 @@ HiveGuard inventories AI tooling by **structure, not product name**, so new tool
 
 | Signal | How it is found |
 |---|---|
-| MCP servers | Any config with `mcpServers` / `servers` / `context_servers` keys or TOML `[mcp_servers.*]`, in home dot-folders, `~/.claude.json` and app config roots (`%APPDATA%`, `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.config`). Servers launched through `npx`/`uvx`/`dlx` without a pinned version are flagged (medium); pinned ones are matched against threat intel like any package. |
+| MCP servers | Any config with `mcpServers` / `servers` / `context_servers` keys or TOML `[mcp_servers.*]`, in home dot-folders, `~/.claude.json` and app config roots (`%APPDATA%`, `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.config`). Servers launched through `npx`/`uvx`/`dlx` without a pinned version are flagged (medium); pinned ones are matched against threat intel like any package. Servers in a tool's catalog folders (`plugins/`, `connectors/`, `marketplace/`, …: available, not configured) and servers marked `disabled`/`enabled = false` are listed but not counted, flagged or matched. |
 | Editors | Any `~/.<name>/extensions/extensions.json` (VS Code and its forks); their extensions join the extension inventory. |
 | Agent files | `skills/*/SKILL.md`, `rules/`, `commands/`, `agents/`, `prompts/`, `instructions/` in any dot-folder of a home or project, checked like other AI instruction files. |
 | Local models | `.gguf`, `.safetensors`, `.onnx`, `.pt`, `.ckpt`, … ≥ 10 MB, format confirmed from the first bytes (model bodies are never read); Hugging Face, Ollama and LM Studio stores. Pickle-format models, which can run code when loaded, are marked. |
