@@ -15,8 +15,11 @@ const { statSafe } = require('./fs-safe');
 // Folders inside app roots that hold caches, logs or bulk data, never configuration.
 const NOISE_DIR = /(cache|^logs?$|crash|gpu|indexeddb|local storage|session storage|service worker|blob_storage|webstorage|shadercache|^node_modules$|^extensions$|^resources$|^locales$|^workspacestorage$|^history$|^backups$|^temp$|^tmp$|^packages$|^dist$|^user data$)/i;
 
-const MAX_DEPTH = 5;
-const MAX_DIRS_PER_ROOT = 300;
+// Configs sit near the top of an app folder (deepest known: User/globalStorage/<ext>/settings/),
+// so a shallow breadth-first walk with small budgets finds them without crawling big app trees.
+const MAX_DEPTH = 4;
+const MAX_DIRS_PER_ROOT = 60;
+const MAX_DIRS_TOTAL = 4000;
 
 function listDirs(dir) {
   try {
@@ -55,9 +58,10 @@ function agentRoots(platform) {
  * Candidate MCP/agent config files under the roots, chosen by file name and position,
  * never by product: *mcp*.json/.toml anywhere (bounded), editor User/settings.json,
  * a dot-folder's top-level settings.json / config.toml / config.json, Claude Desktop's
- * config, and ~/.claude.json. Returns [{ path, label, home }].
+ * config, and ~/.claude.json. Returns [{ path, label, home }]; stats (optional) receives
+ * { roots, dirs_visited, roots_over_budget }.
  */
-function mcpCandidates(platform, roots = agentRoots(platform)) {
+function mcpCandidates(platform, roots = agentRoots(platform), stats = {}) {
   const out = [];
   const add = (p, label, home) => out.push({ path: p, label, home });
 
@@ -67,17 +71,27 @@ function mcpCandidates(platform, roots = agentRoots(platform)) {
     if (st && st.isFile()) add(claudeJson, 'claude', home);
   }
 
+  stats.roots = roots.length;
+  stats.dirs_visited = 0;
+  stats.roots_over_budget = [];
   for (const root of roots) {
     let budget = MAX_DIRS_PER_ROOT;
-    const walk = (dir, depth) => {
-      if (depth > MAX_DEPTH || budget-- <= 0) return;
+    const queue = [[root.dir, 0]];
+    while (queue.length > 0) {
+      if (budget <= 0 || stats.dirs_visited >= MAX_DIRS_TOTAL) {
+        stats.roots_over_budget.push(root.label);
+        break;
+      }
+      const [dir, depth] = queue.shift();
+      budget--;
+      stats.dirs_visited++;
       let entries;
-      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
       for (const e of entries) {
         if (e.isSymbolicLink()) continue;
         const full = path.join(dir, e.name);
         if (e.isDirectory()) {
-          if (!NOISE_DIR.test(e.name)) walk(full, depth + 1);
+          if (depth < MAX_DEPTH && !NOISE_DIR.test(e.name)) queue.push([full, depth + 1]);
           continue;
         }
         if (!e.isFile()) continue;
@@ -88,8 +102,7 @@ function mcpCandidates(platform, roots = agentRoots(platform)) {
         const isDesktopConfig = name === 'claude_desktop_config.json';
         if (isMcpNamed || isEditorSettings || isDotTopConfig || isDesktopConfig) add(full, root.label, root.home);
       }
-    };
-    walk(root.dir, 0);
+    }
   }
   return out;
 }

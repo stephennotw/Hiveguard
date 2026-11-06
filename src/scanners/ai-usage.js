@@ -141,7 +141,8 @@ function scan(platform, opts = {}, inputs = {}) {
   }
   for (const cfg of mcpConfigs) {
     for (const srv of (cfg.servers || [])) {
-      for (const key of (srv.env_keys || [])) {
+      // Only literal values count as plain-text credentials; references (${env:X}) do not.
+      for (const key of (srv.env_literal_keys || [])) {
         const provider = PROVIDER_VARS[String(key).toUpperCase()];
         if (provider) add(provider, 'mcp-config', cfg.config_path, { how: 'variable', variable: String(key).toUpperCase() });
       }

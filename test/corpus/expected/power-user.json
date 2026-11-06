@@ -27,11 +27,11 @@
   "ai_sdks": [],
   "editors_discovered": [],
   "ai_files": [
+    "Agents (AGENTS.md): kim/projects/notes/AGENTS.md",
     "Claude Code: kim/.claude/CLAUDE.md",
     "Claude Code: kim/.claude/settings.json",
     "Claude Code: kim/projects/notes/CLAUDE.md symlink",
     "Claude Code: kim/shared/CLAUDE.md",
-    "Codex: kim/.codex/AGENTS.md",
-    "Codex: kim/projects/notes/AGENTS.md"
+    "Codex: kim/.codex/AGENTS.md"
   ]
 }

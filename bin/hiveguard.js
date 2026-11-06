@@ -273,7 +273,9 @@ async function main() {
   scanResults.editor_extensions = timedScan('editor-ext', () => editorExtScanner.scan(platform));
   scanResults.editor_extensions.discovered_editors = discoveredEditors;
   scanResults.browser_extensions = timedScan('browser-ext', () => browserExtScanner.scan(platform));
-  scanResults.mcp_configs = timedScan('mcp', () => mcpScanner.scan(platform, scanOpts, mcpCandidates(platform, aiRoots)));
+  const mcpDiscovery = {};
+  scanResults.mcp_configs = timedScan('mcp', () => mcpScanner.scan(platform, scanOpts, mcpCandidates(platform, aiRoots, mcpDiscovery)));
+  scanResults.mcp_configs.discovery = mcpDiscovery;
 
   if (!opts.noSecrets) {
     scanResults.secrets_hygiene = timedScan('secrets', () => secretsScanner.scan(platform, scanOpts));

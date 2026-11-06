@@ -68,7 +68,8 @@ const SCRIPT_FILE_REF = /\b(?:node|bun|deno|sh|bash)\s+(?:-{1,2}[\w-]+(?:=\S+)?\
 function scan(platform, opts = {}, npmProjects) {
   const projects = npmProjects || [];
   const findings = [];
-  const stats = { packagesScanned: 0, seen: new Set() };
+  const stats = { packagesScanned: 0, linksResolved: 0, seen: new Set() };
+  timing.reset();
 
   for (const proj of projects) {
     const projectDir = proj.project_path;
@@ -79,11 +80,13 @@ function scan(platform, opts = {}, npmProjects) {
     if (projPkgJson && projPkgJson.scripts) {
       findings.push(...checkScripts(projPkgJson.scripts, projPkgJson.name || path.basename(projectDir), project, projectDir));
     }
-    scanNodeModules(path.join(projectDir, 'node_modules'), { project, root: realpathOr(projectDir), findings, stats }, 0);
+    const root = realpathOr(projectDir);
+    scanNodeModules(path.join(projectDir, 'node_modules'), { project, root, findings, stats }, 0, path.join(root, 'node_modules'));
   }
 
   for (const nmDir of globalNodeModulesDirs(platform)) {
-    scanNodeModules(nmDir, { project: '(global)', root: realpathOr(nmDir), findings, stats }, 0);
+    const root = realpathOr(nmDir);
+    scanNodeModules(nmDir, { project: '(global)', root, findings, stats }, 0, root);
   }
 
   if (findings.length > 0) {
@@ -95,6 +98,10 @@ function scan(platform, opts = {}, npmProjects) {
   return {
     ecosystem: SCANNER_ID,
     packages_scanned: stats.packagesScanned,
+    projects_scanned: projects.length,
+    links_resolved: stats.linksResolved,
+    // Where the time went, for diagnosing slow endpoints (milliseconds).
+    timing_ms: timing.snapshot(),
     total_findings: findings.length,
     findings,
   };
@@ -116,59 +123,64 @@ function globalNodeModulesDirs(platform) {
  * Walks node_modules: scoped, nested, and pnpm's .pnpm store. Symlinked packages
  * (pnpm, npm/yarn workspaces) are followed only when they resolve inside ctx.root,
  * and each real package directory is scanned once.
+ *
+ * Real paths are built by joining names onto the parent's real path; only links are
+ * resolved (once, natively). Resolving every directory was the dominant cost on
+ * Windows, where each path component costs an antivirus-scanned filesystem call.
  */
-function scanNodeModules(nmDir, ctx, depth) {
+function scanNodeModules(nmDir, ctx, depth, realNm) {
   if (depth > MAX_NESTING) return;
   for (const entry of readDirEntries(nmDir)) {
     const entryPath = path.join(nmDir, entry.name);
+    const entryReal = path.join(realNm, entry.name);
 
     if (entry.name === '.pnpm') {
       for (const store of readDirEntries(entryPath)) {
-        const storeDir = resolveDir(path.join(entryPath, store.name), store, ctx);
-        if (storeDir) scanNodeModules(path.join(storeDir, 'node_modules'), ctx, depth + 1);
+        const r = resolveDir(path.join(entryPath, store.name), store, ctx, path.join(entryReal, store.name));
+        if (r) scanNodeModules(path.join(r.path, 'node_modules'), ctx, depth + 1, path.join(r.real, 'node_modules'));
       }
       continue;
     }
     if (entry.name.startsWith('.')) continue;
 
     if (entry.name.startsWith('@')) {
-      const scopeDir = resolveDir(entryPath, entry, ctx);
-      if (!scopeDir) continue;
-      for (const scoped of readDirEntries(scopeDir)) {
+      const scope = resolveDir(entryPath, entry, ctx, entryReal);
+      if (!scope) continue;
+      for (const scoped of readDirEntries(scope.path)) {
         if (scoped.name.startsWith('.')) continue;
-        scanPackageDir(path.join(entryPath, scoped.name), scoped, `${entry.name}/${scoped.name}`, ctx, depth);
+        scanPackageDir(path.join(entryPath, scoped.name), scoped, `${entry.name}/${scoped.name}`, ctx, depth, path.join(scope.real, scoped.name));
       }
       continue;
     }
-    scanPackageDir(entryPath, entry, entry.name, ctx, depth);
+    scanPackageDir(entryPath, entry, entry.name, ctx, depth, entryReal);
   }
 }
 
-function scanPackageDir(pkgPath, dirent, pkgName, ctx, depth) {
-  const dir = resolveDir(pkgPath, dirent, ctx);
-  if (!dir) return;
-  const real = realpathOr(dir);
-  if (ctx.stats.seen.has(real)) return;
-  ctx.stats.seen.add(real);
+function scanPackageDir(pkgPath, dirent, pkgName, ctx, depth, realGuess) {
+  const r = resolveDir(pkgPath, dirent, ctx, realGuess);
+  if (!r) return;
+  if (ctx.stats.seen.has(r.real)) return;
+  ctx.stats.seen.add(r.real);
 
   ctx.stats.packagesScanned++;
-  const pkgJson = readJsonSafe(path.join(pkgPath, 'package.json'), { maxBytes: MAX_PACKAGE_JSON_BYTES });
+  const pkgJson = timing.measure('read_package_json', () => readJsonSafe(path.join(pkgPath, 'package.json'), { maxBytes: MAX_PACKAGE_JSON_BYTES }));
   if (pkgJson && pkgJson.scripts) {
     ctx.findings.push(...checkScripts(pkgJson.scripts, pkgJson.name || pkgName, ctx.project, pkgPath));
   }
-  scanNodeModules(path.join(pkgPath, 'node_modules'), ctx, depth + 1);
+  scanNodeModules(path.join(pkgPath, 'node_modules'), ctx, depth + 1, path.join(r.real, 'node_modules'));
 }
 
-// Directory path for a dirent: real directories as-is, symlinks only if they resolve
-// to a directory inside ctx.root.
-function resolveDir(p, dirent, ctx) {
-  if (dirent.isDirectory()) return p;
+// { path, real } for a dirent: real directories keep their computed real path; symlinks
+// are resolved and followed only if they land on a directory inside ctx.root.
+function resolveDir(p, dirent, ctx, realGuess) {
+  if (dirent.isDirectory()) return { path: p, real: realGuess };
   if (!dirent.isSymbolicLink()) return null;
+  ctx.stats.linksResolved++;
   let real;
-  try { real = fs.realpathSync(p); } catch { return null; }
+  try { real = timing.measure('resolve_links', () => fs.realpathSync.native(p)); } catch { return null; }
   if (real !== ctx.root && !real.startsWith(ctx.root + path.sep)) return null;
   const st = statSafe(real);
-  return st && st.isDirectory() ? p : null;
+  return st && st.isDirectory() ? { path: p, real } : null;
 }
 
 // Script paths are reported as npm scripts write them, identically on every OS.
@@ -177,16 +189,30 @@ function toPosix(p) {
 }
 
 function realpathOr(p) {
-  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  try { return fs.realpathSync.native(p); } catch { return path.resolve(p); }
 }
 
 function readDirEntries(dir) {
-  try {
-    return fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
+  return timing.measure('list_dirs', () => {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+  });
 }
+
+// Cumulative time per filesystem activity within one scan.
+const timing = {
+  totals: {},
+  reset() { this.totals = { list_dirs: 0, read_package_json: 0, resolve_links: 0, read_script_files: 0 }; },
+  measure(key, fn) {
+    const t = process.hrtime.bigint();
+    try { return fn(); } finally { this.totals[key] += Number(process.hrtime.bigint() - t) / 1e6; }
+  },
+  snapshot() { return Object.fromEntries(Object.entries(this.totals).map(([k, v]) => [k, Math.round(v)])); },
+};
+timing.reset();
 
 function checkScripts(scripts, packageName, project, pkgDir) {
   const hits = [];
@@ -202,7 +228,7 @@ function checkScripts(scripts, packageName, project, pkgDir) {
     const refs = localRequire ? resolveRequire(localRequire[3], pkgDir) : referencedScriptFiles(text, pkgDir);
 
     for (const ref of refs) {
-      const fileHits = inspectScriptFile(ref.abs, ref.rel);
+      const fileHits = timing.measure('read_script_files', () => inspectScriptFile(ref.abs, ref.rel));
       if (fileHits.length > 0) {
         matched.push(...fileHits);
         scriptFiles.push(ref.rel);

@@ -93,3 +93,15 @@ describe('AI tool discovery by structure', () => {
     assert.deepEqual(r.configs.map(c => [c.app, c.server_count]), [['v', 0], ['someagent', 1]]);
   });
 });
+
+describe('MCP env literals vs references', () => {
+  it('reports only env keys whose value is written literally', () => {
+    const [entry] = mcp.parseJsonServers(JSON.stringify({ mcpServers: { s: { command: 'x', env: {
+      PERPLEXITY_API_KEY: 'pplx-0123456789abcdef', OPENAI_API_KEY: '${env:OPENAI_API_KEY}', GROQ_API_KEY: '$GROQ_API_KEY', EMPTY: '' } } } }), false);
+    const r = mcp.scan({ mcpConfigPaths: [] }, {}, []);
+    assert.equal(r.configs.length, 0);
+    const toml = mcp.parseTomlServers('[mcp_servers.t]\ncommand = "x"\n[mcp_servers.t.env]\nHF_TOKEN = "hf_literal_value_123"\nGEMINI_API_KEY = "${GEMINI_API_KEY}"\n');
+    assert.deepEqual(toml[0].cfg.env, { HF_TOKEN: 'hf_literal_value_123', GEMINI_API_KEY: '${GEMINI_API_KEY}' });
+    assert.ok(entry.cfg.env.PERPLEXITY_API_KEY);
+  });
+});

@@ -21,6 +21,7 @@ function scan(platform, opts = {}, candidates = []) {
   const configs = [];
   const findings = [];
   const seen = new Set();
+  const io = { files_read: 0, bytes_read: 0, read_parse_ms: 0, largest_file_bytes: 0 };
 
   const sources = [
     ...(platform.mcpConfigPaths || []).filter(p => typeof p === 'string').map(p => ({ path: p, label: path.basename(path.dirname(p)), fixed: true })),
@@ -31,15 +32,20 @@ function scan(platform, opts = {}, candidates = []) {
     const st = statSafe(src.path);
     if (!st || !st.isFile() || st.size > MAX_CONFIG_BYTES) continue;
     let real;
-    try { real = fs.realpathSync(src.path); } catch { continue; }
+    try { real = fs.realpathSync.native(src.path); } catch { continue; }
     if (seen.has(real)) continue;
     seen.add(real);
 
+    const t0 = process.hrtime.bigint();
     const raw = readFileSafe(src.path);
     if (raw == null) continue;
     const entries = src.path.toLowerCase().endsWith('.toml')
       ? parseTomlServers(raw)
       : parseJsonServers(raw, /mcp/i.test(path.basename(src.path)));
+    io.files_read++;
+    io.bytes_read += st.size;
+    io.largest_file_bytes = Math.max(io.largest_file_bytes, st.size);
+    io.read_parse_ms += Number(process.hrtime.bigint() - t0) / 1e6;
     if (entries == null) continue;
     if (entries.length === 0 && !src.fixed) continue;
 
@@ -76,6 +82,7 @@ function scan(platform, opts = {}, candidates = []) {
     total_configs: configs.length,
     total_servers: configs.reduce((s, c) => s + c.server_count, 0),
     findings,
+    io: { ...io, read_parse_ms: Math.round(io.read_parse_ms) },
   };
 }
 
@@ -127,7 +134,9 @@ function parseTomlServers(raw) {
     if (!kv) continue;
     const cfg = servers.get(current);
     if (inEnv) {
-      (cfg.env = cfg.env || {})[kv[1]] = true;
+      let envValue = kv[2].replace(/\s+#.*$/, '').trim();
+      try { envValue = JSON.parse(envValue); } catch { envValue = envValue.replace(/^'(.*)'$/, '$1'); }
+      (cfg.env = cfg.env || {})[kv[1]] = envValue;
       continue;
     }
     let value = kv[2].replace(/\s+#.*$/, '');
@@ -141,6 +150,11 @@ function describeServer(name, cfg, scope) {
   const args = Array.isArray(cfg.args) ? cfg.args.map(String) : [];
   const url = cfg.url || cfg.serverUrl || cfg.httpUrl || null;
   const envKeys = isObj(cfg.env) ? Object.keys(cfg.env) : [];
+  // Keys whose value is written literally in the file (not ${env:X}, $X, %X% or empty).
+  const literalKeys = envKeys.filter(k => {
+    const v = cfg.env[k];
+    return typeof v === 'string' && v.trim().length >= 8 && !/^\s*(\$|%)/.test(v);
+  });
   const server = {
     name,
     transport: cfg.transport || cfg.type || (cfg.command ? 'stdio' : url ? 'http' : 'unknown'),
@@ -148,6 +162,7 @@ function describeServer(name, cfg, scope) {
     args,
     url,
     env_keys: envKeys,
+    env_literal_keys: literalKeys,
     has_credentials: envKeys.some(k => CRED_KEY.test(k)),
   };
   if (scope) server.project = scope;

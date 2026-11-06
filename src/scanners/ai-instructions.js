@@ -45,7 +45,7 @@ const PROJECT_FILES = [
   { file: '.roomodes', tool: 'Roo Code' },
   { file: '.roorules', tool: 'Roo Code' },
   { file: 'codex.md', tool: 'Codex' },
-  { file: 'AGENTS.md', tool: 'Codex' },
+  { file: 'AGENTS.md', tool: 'Agents (AGENTS.md)' },
   { file: '.vscode/tasks.json', tool: 'VS Code', kind: 'vscode-tasks' },
 ];
 
@@ -87,15 +87,13 @@ function scan(platform, opts = {}, projectDirs) {
   const reportedLinks = new Set();
 
   const ctx = { findings, inventory, seen, reportedLinks };
-  // Specific entries first so their product labels win; generic discovery fills the rest.
-  for (const { dir, cloud } of dirs) {
-    for (const spec of PROJECT_FILES) inspectSpec(spec, dir, dir, ctx, 'project', !!cloud);
-    inspectGenericDotDirs(dir, ctx, 'project', !!cloud);
-  }
-  for (const home of (platform.userHomes || [])) {
-    for (const spec of USER_FILES) inspectSpec(spec, home, home, ctx, 'user');
-    inspectGenericDotDirs(home, ctx, 'user', false);
-  }
+  // Most specific first so its label wins (files are deduplicated by identity):
+  // user-level entries, project entries, then generic dot-folder discovery.
+  const homes = platform.userHomes || [];
+  for (const home of homes) for (const spec of USER_FILES) inspectSpec(spec, home, home, ctx, 'user');
+  for (const { dir, cloud } of dirs) for (const spec of PROJECT_FILES) inspectSpec(spec, dir, dir, ctx, 'project', !!cloud);
+  for (const { dir, cloud } of dirs) inspectGenericDotDirs(dir, ctx, 'project', !!cloud);
+  for (const home of homes) inspectGenericDotDirs(home, ctx, 'user', false);
 
   const suspiciousCount = findings.filter(f => f.severity !== 'info').length;
   if (suspiciousCount > 0) {

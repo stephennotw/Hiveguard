@@ -87,7 +87,20 @@ const ecos = result.ecosystems || {};
 const mcpCfgs = (ecos.mcp_configs && ecos.mcp_configs.configs) || [];
 const servers = mcpCfgs.flatMap(c => c.servers.map(s => ({ app: c.app || c.config_name, ...s })));
 add(`  MCP servers: ${servers.length} (${servers.filter(s => s.unpinned).length} unpinned)`);
-for (const [k, v] of count(servers, s => s.app)) add(`    ${String(v).padStart(4)} x ${k}`);
+const byApp = new Map();
+for (const c of mcpCfgs) {
+  if (!c.server_count) continue;
+  const app = c.app || c.config_name;
+  const e = byApp.get(app) || { configs: 0, servers: 0, names: new Set(), files: new Set() };
+  e.configs++;
+  e.servers += c.server_count;
+  for (const srv of c.servers) e.names.add(srv.name);
+  e.files.add(path.basename(c.config_path));
+  byApp.set(app, e);
+}
+for (const [app, e] of [...byApp.entries()].sort((a, b) => b[1].servers - a[1].servers)) {
+  add(`    ${String(e.servers).padStart(4)} x ${app} (${e.configs} config file(s): ${[...e.files].join(', ')}; ${e.names.size} distinct server names)`);
+}
 const editorsFound = (ecos.editor_extensions && ecos.editor_extensions.discovered_editors) || [];
 if (editorsFound.length) add(`  editors found by structure: ${editorsFound.join(', ')}`);
 const am = ecos.ai_models || {};
@@ -134,6 +147,16 @@ if (customHooks.length) {
   add('Custom git hooks not flagged (info)');
   for (const [k, v] of count(customHooks, f => `"${f.hook}" (${f.origin})`)) add(`  ${String(v).padStart(4)} x ${k}`);
 }
+
+add();
+add('Diagnostics');
+const lcs = (result.ecosystems && result.ecosystems.lifecycle_scripts) || {};
+add(`  install scripts: ${lcs.projects_scanned || 0} project dirs, ${lcs.packages_scanned || 0} packages, ${lcs.links_resolved || 0} links resolved`);
+if (lcs.timing_ms) add(`    time (ms): ${Object.entries(lcs.timing_ms).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+const disc = (ecos.mcp_configs && ecos.mcp_configs.discovery) || {};
+const io = (ecos.mcp_configs && ecos.mcp_configs.io) || {};
+add(`  MCP discovery: ${disc.roots || 0} app/dot folders, ${disc.dirs_visited || 0} dirs visited, ${(disc.roots_over_budget || []).length} over budget`);
+add(`    config reads: ${io.files_read || 0} files, ${Math.round((io.bytes_read || 0) / 1048576)} MB (largest ${Math.round((io.largest_file_bytes || 0) / 1048576)} MB), ${io.read_parse_ms || 0} ms read+parse`);
 
 const summary = lines.join('\n') + '\n';
 const summaryFile = path.join(outDir, 'selfcheck-summary.txt');

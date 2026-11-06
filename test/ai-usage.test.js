@@ -64,7 +64,7 @@ describe('ai-usage scan', () => {
     write('.zshrc', `export ANTHROPIC_API_KEY=${fake('k', 40)}\n`);
     const r = scan({ userHomes: [home] }, {}, {
       envFiles: [{ path: env, cloud: false }, { path: cloudEnv, cloud: true }],
-      mcpConfigs: [{ config_path: '/cfg/mcp.json', servers: [{ env_keys: ['GITHUB_TOKEN', 'HF_TOKEN'] }] }],
+      mcpConfigs: [{ config_path: '/cfg/mcp.json', servers: [{ env_keys: ['GITHUB_TOKEN', 'HF_TOKEN', 'OPENAI_API_KEY'], env_literal_keys: ['GITHUB_TOKEN', 'HF_TOKEN'] }] }],
       packages: [
         { ecosystem: 'npm', name: 'openai', version: '4.0.0', source: 'a/package-lock.json' },
         { ecosystem: 'npm', name: 'openai', version: '4.1.0', source: 'b/package-lock.json' },

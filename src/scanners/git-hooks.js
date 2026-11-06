@@ -48,11 +48,11 @@ function scan(platform, opts = {}, projectDirs) {
   // namesOnly: cloud-synced folder; list hooks but never read their contents.
   const inspectHooksDir = (hooksDir, repoLabel, origin, trustedRoot, namesOnly = false) => {
     let real;
-    try { real = fs.realpathSync(hooksDir); } catch { return; }
+    try { real = fs.realpathSync.native(hooksDir); } catch { return; }
     if (scannedHookDirs.has(real)) return;
     scannedHookDirs.add(real);
     let realRoot = real;
-    try { realRoot = fs.realpathSync(trustedRoot); } catch { /* keep hooks dir */ }
+    try { realRoot = fs.realpathSync.native(trustedRoot); } catch { /* keep hooks dir */ }
 
     for (const entry of readdirSafe(hooksDir)) {
       if (!HOOK_NAMES.has(entry)) continue;
@@ -66,7 +66,7 @@ function scan(platform, opts = {}, projectDirs) {
         continue;
       }
       let target;
-      try { target = fs.realpathSync(hookPath); } catch { continue; }
+      try { target = fs.realpathSync.native(hookPath); } catch { continue; }
       if (!isInside(target, realRoot) && !isInside(target, real)) {
         findings.push(symlinkFinding(entry, hookPath, target, repoLabel, origin, stat));
         continue;
