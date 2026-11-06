@@ -102,6 +102,7 @@ The `.node/` directory is gitignored and never committed to the repo.
 | `--json` | JSON to stdout (quiet mode) | off |
 | `--offline` | Use bundled baseline catalogs only | off |
 | `--scan-dirs <dirs>` | Comma-separated scan roots | auto-detect |
+| `--normal-priority` | Run at normal CPU priority instead of below normal | off |
 | `--users-root <dir>` | Enumerate user profiles under `<dir>` instead of `/home`, `/Users` or `C:\Users`, and skip system-wide locations (e.g. scanning a mounted disk image) | off |
 | `--custom-intel <dir>` | Dir(s) with custom threat intel JSON | none |
 | `--no-report` | Skip HTML report | off |
@@ -222,6 +223,21 @@ Note: Threat intel catalogs are loaded into memory at runtime — no disk cache 
 | **AI Assistant Files** | Instruction/config files read by AI coding tools: prompt injection, hidden Unicode, exfiltration instructions, auto-run VS Code tasks, Claude Code hook commands | `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `.cursor/rules/`, `.github/copilot-instructions.md`, `.claude/settings.json`, `.vscode/tasks.json`, … (project and user level) |
 
 Install-script, git-hook and AI-file excerpts in the output are attacker-controlled text; invisible and control characters are stripped from them.
+
+## AI on This Machine
+
+HiveGuard inventories AI tooling by **structure, not product name**, so new tools show up (under their folder name) without anyone maintaining a product catalog:
+
+| Signal | How it is found |
+|---|---|
+| MCP servers | Any config with `mcpServers` / `servers` / `context_servers` keys or TOML `[mcp_servers.*]`, in home dot-folders, `~/.claude.json` and app config roots (`%APPDATA%`, `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.config`). Servers launched through `npx`/`uvx`/`dlx` without a pinned version are flagged (medium); pinned ones are matched against threat intel like any package. |
+| Editors | Any `~/.<name>/extensions/extensions.json` (VS Code and its forks); their extensions join the extension inventory. |
+| Agent files | `skills/*/SKILL.md`, `rules/`, `commands/`, `agents/`, `prompts/`, `instructions/` in any dot-folder of a home or project, checked like other AI instruction files. |
+| Local models | `.gguf`, `.safetensors`, `.onnx`, `.pt`, `.ckpt`, … ≥ 10 MB, format confirmed from the first bytes (model bodies are never read); Hugging Face, Ollama and LM Studio stores. Pickle-format models, which can run code when loaded, are marked. |
+| Provider credentials | Well-known variable names or key formats in `.env` files, shell/PowerShell profiles and MCP configs. Only the provider, file and variable name are reported, never the value. |
+| AI SDKs | ~80 SDK packages tagged in the existing dependency inventory. |
+
+Files inside cloud-sync folders (OneDrive, Dropbox, Google Drive, iCloud) are listed by name only and never read, because reading an online-only file makes the OS download it. HiveGuard also runs at below-normal CPU priority by default (`--normal-priority` to opt out).
 
 ## Threat Intelligence
 

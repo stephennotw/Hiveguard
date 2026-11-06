@@ -34,6 +34,15 @@ function builder(root) {
       fs.mkdirSync(path.dirname(abs(linkRel)), { recursive: true });
       fs.symlinkSync(abs(targetRel), abs(linkRel), IS_WINDOWS ? 'junction' : 'dir');
     },
+    // Sparse file: only head (and tail) bytes written, so large model fixtures are cheap.
+    sparse: (rel, size, head, tail) => {
+      fs.mkdirSync(path.dirname(abs(rel)), { recursive: true });
+      const fd = fs.openSync(abs(rel), 'w');
+      fs.writeSync(fd, head, 0, head.length, 0);
+      fs.ftruncateSync(fd, size);
+      if (tail) fs.writeSync(fd, tail, 0, tail.length, size - tail.length);
+      fs.closeSync(fd);
+    },
     // File symlinks need elevated rights on Windows; those fixtures are POSIX-only.
     fileSymlink: (targetRel, linkRel) => {
       if (IS_WINDOWS) return;
@@ -90,17 +99,24 @@ function summarize(result, exitCode, usersRoot) {
     },
     threat_matches: (result.threat_matches || []).map(m => `${m.ecosystem}:${m.name}@${m.version}`),
     findings,
-    git_hooks: eco.git_hooks.findings.map(f => `${f.severity} ${rel(f.path)} (${f.origin}) ${triggers(f)}`),
+    git_hooks: eco.git_hooks.findings.map(f => `${f.severity} ${rel(f.path)} (${f.origin}) ${triggers(f)}${f.content_not_read ? ' not-read' : ''}`),
+    mcp_servers: (eco.mcp_configs.configs || []).flatMap(c => c.servers.map(s => `${c.app}: ${s.name}${s.project ? ` (${rel(s.project)})` : ''} -> ${s.package ? `${s.package_ecosystem}:${s.package}@${s.package_version || 'unpinned'}` : (s.command || s.url)}`)),
+    models: (eco.ai_models.models || []).map(m => `${m.store || '-'} ${m.name || rel(m.path)} [${m.format}]${m.pickle ? ' pickle' : ''}${m.content_not_read ? ' not-read' : ''}`),
+    ai_credentials: (eco.ai_usage.providers || []).map(p => `${p.provider} ${p.source} ${p.variable || 'key-format'} ${rel(p.path)}`),
+    ai_sdks: (eco.ai_usage.sdks || []).map(s => `${s.ecosystem}:${s.name} ${s.versions.join(',')} x${s.projects}`),
+    editors_discovered: eco.editor_extensions.discovered_editors || [],
     ai_files: eco.ai_instructions.inventory.map(i => [
       `${i.tool}: ${rel(i.path)}`,
       i.hooks ? ` hooks=${i.hooks.length}` : '',
       i.autorun_tasks ? ` autorun=${i.autorun_tasks.length}` : '',
       i.symlink_target ? ' symlink' : '',
+      i.content_not_read ? ' not-read' : '',
+      i.skill_files != null ? ` skill_files=${i.skill_files}` : '',
     ].join('')),
   };
 }
 
-const LIST_KEYS = ['threat_matches', 'findings', 'git_hooks', 'ai_files'];
+const LIST_KEYS = ['threat_matches', 'findings', 'git_hooks', 'ai_files', 'mcp_servers', 'models', 'ai_credentials', 'ai_sdks', 'editors_discovered'];
 
 function forPlatform(expected, machine) {
   if (!IS_WINDOWS || !machine.posixOnly) return expected;

@@ -78,6 +78,14 @@ function isBannerRequired() {
 if (isBannerRequired()) console.log(BANNER);
 `;
 
+// Model file heads (sparse fixtures; bodies are never read by the scanner).
+const GGUF_HEAD = Buffer.from('GGUF\x03\x00\x00\x00\x00\x00\x00\x00', 'latin1');
+const ZIP_HEAD = Buffer.from('PK\x03\x04\x14\x00\x00\x00', 'latin1');
+const TORCH_TAIL = Buffer.from('archive/data.pklarchive/version', 'latin1');
+const MB = 1024 * 1024;
+// Fake credential-shaped values assembled at runtime (no key-shaped literals in source).
+const fakeKey = (prefix, n) => prefix + 'Q7w8E9r0'.repeat(Math.ceil(n / 8)).slice(0, n);
+
 const lockfile = (name, pkgs) => ({
   name,
   lockfileVersion: 3,
@@ -142,6 +150,7 @@ module.exports = [
     description: 'Windows-style profile: work repo in OneDrive with a backdoored git hook, and a take-home assignment in Downloads that executes on npm install, on folder open in VS Code, and on Claude Code session start, plus a rules file with tag-character smuggling.',
     knownGaps: [
       'The .claude/setup.mjs payload referenced by the project hook is not itself inspected.',
+      'By design, files in cloud-synced folders (OneDrive here) are listed but never read, so the backdoored post-checkout hook in the OneDrive repo is reported as info only.',
     ],
     build(b) {
       const work = 'sam/OneDrive - Contoso/Documents/GitHub/payments';
@@ -212,6 +221,38 @@ module.exports = [
       b.file('kim/projects/notes/README.md', '# Notes\n');
       b.file('kim/projects/notes/AGENTS.md', '# Notes\nKeep entries short.\n');
       b.fileSymlink('kim/shared/CLAUDE.md', 'kim/projects/notes/CLAUDE.md');
+    },
+  },
+
+  {
+    name: 'ai-workstation',
+    description: 'Developer laptop full of AI tooling, found by structure: an unknown agent with MCP servers (one unpinned, one pinned to a known-malicious package), Codex TOML and ~/.claude.json project servers, an unknown VS Code fork, a custom agent skill, local GGUF / Hugging Face / Ollama models, provider keys in a shell profile and .env, and AI SDK dependencies.',
+    knownGaps: [
+      'Pickle-format models are inventoried and marked, but their contents are not inspected for dangerous imports.',
+    ],
+    build(b) {
+      const h = 'ari';
+      b.json(`${h}/.brandnew-agent/mcp.json`, { mcpServers: {
+        files: { command: 'npx', args: ['-y', 'files-mcp-server'] },
+        ipc: { command: 'npx', args: ['-y', 'node-ipc@9.2.3'] },
+      } });
+      b.file(`${h}/.codex/config.toml`, 'model = "o4"\n\n[mcp_servers.fetch]\ncommand = "uvx"\nargs = ["mcp-server-fetch==2025.4.7"]\n');
+      b.json(`${h}/.claude.json`, { numStartups: 3, projects: { '/work/bot': { mcpServers: { db: { type: 'http', url: 'https://db.example/mcp' } } } } });
+      b.file(`${h}/.newfork/extensions/extensions.json`, '[]');
+      b.json(`${h}/.newfork/extensions/acme.ai-helper-1.2.0/package.json`, { name: 'ai-helper', publisher: 'acme', version: '1.2.0', engines: { vscode: '^1.90.0' } });
+      b.file(`${h}/.someagent/skills/release/SKILL.md`, '---\nname: release\ndescription: Cut a release\n---\nRun scripts/release.sh and summarise the changelog.\n');
+      b.file(`${h}/.someagent/skills/release/scripts/release.sh`, '#!/bin/sh\nnpm version patch\n');
+
+      b.sparse(`${h}/Downloads/qwen2.5-7b-instruct-q4_k_m.gguf`, 24 * MB, GGUF_HEAD);
+      b.sparse(`${h}/.cache/huggingface/hub/models--acme--sentiment/snapshots/0f1e2d/pytorch_model.bin`, 16 * MB, ZIP_HEAD, TORCH_TAIL);
+      b.json(`${h}/.ollama/models/manifests/registry.ollama.ai/library/llama3.2/3b`, { layers: [{ mediaType: 'application/vnd.ollama.image.model', size: 2019393189 }] });
+
+      b.file(`${h}/.zshrc`, `export PATH="$HOME/bin:$PATH"\nexport ANTHROPIC_API_KEY=${fakeKey('sk-ant-api03-', 60)}\n`);
+      const bot = `${h}/projects/bot`;
+      b.file(`${bot}/.env`, `OPENAI_API_KEY=${fakeKey('sk-proj-', 48)}\nPORT=3000\n`);
+      b.file(`${bot}/.env.example`, 'OPENAI_API_KEY=your-key-here\n');
+      b.json(`${bot}/package.json`, { name: 'bot' });
+      b.json(`${bot}/package-lock.json`, lockfile('bot', [['openai', '4.77.0'], ['@anthropic-ai/sdk', '0.39.0'], ['zod', '3.24.1']]));
     },
   },
 ];

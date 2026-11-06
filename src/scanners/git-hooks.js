@@ -45,7 +45,8 @@ function scan(platform, opts = {}, projectDirs) {
   let hooksFound = 0;
 
   // trustedRoot: hooks that are symlinks may only be read if they resolve inside it.
-  const inspectHooksDir = (hooksDir, repoLabel, origin, trustedRoot) => {
+  // namesOnly: cloud-synced folder; list hooks but never read their contents.
+  const inspectHooksDir = (hooksDir, repoLabel, origin, trustedRoot, namesOnly = false) => {
     let real;
     try { real = fs.realpathSync(hooksDir); } catch { return; }
     if (scannedHookDirs.has(real)) return;
@@ -60,6 +61,10 @@ function scan(platform, opts = {}, projectDirs) {
       if (!stat || !stat.isFile()) continue;
       hooksFound++;
 
+      if (namesOnly) {
+        findings.push(unreadFinding(entry, hookPath, repoLabel, origin, stat));
+        continue;
+      }
       let target;
       try { target = fs.realpathSync(hookPath); } catch { continue; }
       if (!isInside(target, realRoot) && !isInside(target, real)) {
@@ -72,8 +77,17 @@ function scan(platform, opts = {}, projectDirs) {
     }
   };
 
-  for (const { dir: repoPath, gitDir: hasGit } of dirs) {
+  for (const { dir: repoPath, gitDir: hasGit, cloud } of dirs) {
     if (!hasGit) continue;
+    if (cloud) {
+      // Only a real .git directory can be listed without reading any file.
+      const dotGit = path.join(repoPath, '.git');
+      const st = statSafe(dotGit);
+      if (!st || !st.isDirectory()) continue;
+      reposScanned++;
+      inspectHooksDir(path.join(dotGit, 'hooks'), repoPath, '.git/hooks', repoPath, true);
+      continue;
+    }
     const gitDir = resolveGitDir(repoPath);
     if (!gitDir) continue;
     reposScanned++;
@@ -187,6 +201,22 @@ function isInside(p, root) {
 // Permission bits carry no meaning on Windows.
 function executableBit(stat) {
   return process.platform === 'win32' ? null : !!(stat.mode & 0o111);
+}
+
+function unreadFinding(hookName, hookPath, repo, origin, stat) {
+  return {
+    severity: 'info',
+    type: 'custom_git_hook',
+    hook: hookName,
+    path: hookPath,
+    repo,
+    origin,
+    executable: executableBit(stat),
+    size: stat.size,
+    content_not_read: 'cloud-synced',
+    triggers: [],
+    text: `Custom git hook "${hookName}" in ${repo} (${origin}); in a cloud-synced folder, contents not read`,
+  };
 }
 
 function symlinkFinding(hookName, hookPath, target, repo, origin, stat) {

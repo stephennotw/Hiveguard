@@ -2,7 +2,8 @@
   "machine": "fake-interview",
   "description": "Windows-style profile: work repo in OneDrive with a backdoored git hook, and a take-home assignment in Downloads that executes on npm install, on folder open in VS Code, and on Claude Code session start, plus a rules file with tag-character smuggling.",
   "known_gaps": [
-    "The .claude/setup.mjs payload referenced by the project hook is not itself inspected."
+    "The .claude/setup.mjs payload referenced by the project hook is not itself inspected.",
+    "By design, files in cloud-synced folders (OneDrive here) are listed but never read, so the backdoored post-checkout hook in the OneDrive repo is reported as info only."
   ],
   "exit_code": 1,
   "counts": {
@@ -12,18 +13,22 @@
   },
   "threat_matches": [],
   "findings": [
-    "critical suspicious_git_hook sam/OneDrive - Contoso/Documents/GitHub/payments/.git/hooks/post-checkout [ip-address-url,pipe-to-shell]",
     "high suspicious_ai_instruction sam/Downloads/take-home-assignment/.cursor/rules/style.mdc [hidden-unicode]",
     "high suspicious_lifecycle_script sam/Downloads/take-home-assignment [ip-address-url,token-env-harvest]",
     "medium suspicious_ai_instruction sam/Downloads/take-home-assignment/.claude/settings.json [project-agent-hooks]",
     "medium suspicious_ai_instruction sam/Downloads/take-home-assignment/.vscode/tasks.json [autorun-on-folder-open]"
   ],
   "git_hooks": [
-    "critical sam/OneDrive - Contoso/Documents/GitHub/payments/.git/hooks/post-checkout (.git/hooks) [ip-address-url,pipe-to-shell]"
+    "info sam/OneDrive - Contoso/Documents/GitHub/payments/.git/hooks/post-checkout (.git/hooks) [] not-read"
   ],
+  "mcp_servers": [],
+  "models": [],
+  "ai_credentials": [],
+  "ai_sdks": [],
+  "editors_discovered": [],
   "ai_files": [
     "Claude Code: sam/Downloads/take-home-assignment/.claude/settings.json hooks=1",
-    "Codex: sam/OneDrive - Contoso/Documents/GitHub/payments/AGENTS.md",
+    "Codex: sam/OneDrive - Contoso/Documents/GitHub/payments/AGENTS.md not-read",
     "Cursor: sam/Downloads/take-home-assignment/.cursor/rules/style.mdc",
     "VS Code: sam/Downloads/take-home-assignment/.vscode/tasks.json autorun=1"
   ]

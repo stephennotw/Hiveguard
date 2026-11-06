@@ -16,6 +16,8 @@ function generateReport(result) {
   const threatMatches = result.threat_matches || [];
   const catalogs = result.catalogs || [];
   const ecosystems = result.ecosystems || {};
+  const aiSignalCount = (ecosystems.mcp_configs?.total_servers || 0) + (ecosystems.ai_models?.total || 0)
+    + (ecosystems.ai_usage?.providers?.length || 0) + (ecosystems.ai_usage?.sdks?.length || 0);
   const hygieneFlagged = (ecosystems.lifecycle_scripts?.total_findings || 0) + (ecosystems.git_hooks?.suspicious || 0) + (ecosystems.ai_instructions?.suspicious || 0);
 
   // Build searchable package array for client-side
@@ -140,6 +142,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
     <div class="nav-item" onclick="showPanel('go')">🔷 Go<span class="badge">${summary.ecosystems.go_projects} projects</span></div>
     <div class="nav-item" onclick="showPanel('extensions')">🔌 Extensions<span class="badge">${summary.ecosystems.editor_extensions + summary.ecosystems.browser_extensions}</span></div>
     <div class="nav-item" onclick="showPanel('mcp')">🔗 MCP<span class="badge">${summary.ecosystems.mcp_servers}</span></div>
+    <div class="nav-item" onclick="showPanel('ai')">🤖 AI on this machine<span class="badge">${aiSignalCount}</span></div>
     <div class="nav-item" onclick="showPanel('hygiene')">🪝 Scripts, Hooks &amp; AI<span class="badge${hygieneFlagged > 0 ? ' critical' : ''}">${hygieneFlagged}</span></div>
   </div></div>`;
 
@@ -366,17 +369,52 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<div class="panel" id="panel-mcp"><h2 style="color:#fff;margin-bottom:1rem">🔗 MCP Configs</h2>`;
   for (const cfg of (ecosystems.mcp_configs?.configs || [])) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-      <h3>${esc(cfg.config_name)}${cfg.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(cfg.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${cfg.server_count} servers</span>
+      <h3>${esc(cfg.app || cfg.config_name)}${cfg.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(cfg.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${cfg.server_count} servers</span>
     </div><div class="card-body">`;
     for (const srv of (cfg.servers || [])) {
       html += `<div class="mcp-entry"><div class="name">${esc(srv.name)}</div>
-        <div class="meta">transport: ${esc(srv.transport)} | cmd: ${esc(srv.command || 'n/a')}</div>`;
+        <div class="meta">transport: ${esc(srv.transport)} | cmd: ${esc(srv.command || srv.url || 'n/a')}${srv.package ? ` | package: ${esc(srv.package)}@${esc(srv.package_version || 'unpinned')}` : ''}</div>`;
+      if (srv.unpinned) html += `<div class="env-warn">⚠ unpinned: runs whatever version of ${esc(srv.package)} was published last</div>`;
       if (srv.env_keys?.length > 0) html += `<div class="env-warn">⚠ env: ${srv.env_keys.map(esc).join(', ')}</div>`;
       html += `</div>`;
     }
     html += `</div></div>`;
   }
   html += `</div>`;
+
+  // ── AI ON THIS MACHINE PANEL ──
+  {
+    const fmtBytes = (n) => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${Math.round((n || 0) / 1048576)} MB`;
+    const card = (title, badge, body) => `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')"><h3>${title}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${badge}</span></div><div class="card-body">${body}</div></div>`;
+    const empty = (t) => `<p style="color:var(--text-dim);font-size:.8rem">${t}</p>`;
+    const table = (head, rows) => `<table><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
+    const mcpCfgs = (ecosystems.mcp_configs?.configs || []).filter(c => c.server_count > 0);
+    const models = ecosystems.ai_models || {};
+    const usage = ecosystems.ai_usage || {};
+    const editors = ecosystems.editor_extensions?.discovered_editors || [];
+    const compromised = new Set(threatMatches.map(m => `${String(m.ecosystem).toLowerCase()}:${m.name}@${m.version}`));
+
+    html += `<div class="panel" id="panel-ai"><h2 style="color:#fff;margin-bottom:.5rem">🤖 AI on this machine</h2>
+      <p style="color:var(--text-dim);font-size:.82rem;margin-bottom:1.5rem">Found by structure (MCP configs, model file formats, credential formats, SDKs), not by product name, so tools HiveGuard has never heard of still show up under their folder name.</p>`;
+
+    html += card('🔗 MCP servers', `${ecosystems.mcp_configs?.total_servers || 0} servers in ${mcpCfgs.length} configs`, mcpCfgs.length === 0 ? empty('No MCP servers configured.')
+      : table(['App', 'Server', 'Runs', 'Notes'], mcpCfgs.flatMap(c => c.servers.map(s => `<tr><td>${esc(c.app || c.config_name)}</td><td>${esc(s.name)}${s.project ? `<div style="font-size:.65rem;color:var(--text-dim)">${esc(s.project)}</div>` : ''}</td><td style="font-size:.72rem">${s.package ? `${esc(s.package)}@${esc(s.package_version || 'unpinned')}` : esc(s.command || s.url || '')}</td><td style="font-size:.7rem">${[compromised.has(`${s.package_ecosystem}:${s.package}@${s.package_version}`) ? '<span class="sev sev-critical">known malicious</span>' : '', s.unpinned ? '<span class="sev sev-medium">unpinned</span>' : '', s.has_credentials ? 'credentials in env' : ''].filter(Boolean).join(' ') || '—'}</td></tr>`))));
+
+    html += card('🧠 Local models', `${models.total || 0} models, ${fmtBytes(models.total_size)}${models.pickle_count ? `, ${models.pickle_count} pickle-format` : ''}`, (models.models || []).length === 0 ? empty('No local model files found.')
+      : '<p style="color:var(--text-dim);font-size:.75rem;margin-bottom:.5rem">Pickle-format models (PyTorch .pt/.ckpt/.bin) can run code when loaded; prefer safetensors or GGUF from untrusted sources.</p>'
+        + table(['Store', 'Model', 'Format', 'Size'], models.models.map(m => `<tr><td>${esc(m.store || '—')}</td><td style="font-size:.72rem;word-break:break-all">${esc(m.name || m.path)}</td><td>${esc(m.format)}${m.pickle ? ' <span class="sev sev-low">pickle</span>' : ''}${m.content_not_read ? ' <span style="font-size:.65rem;color:var(--text-dim)">(cloud, not read)</span>' : ''}</td><td>${fmtBytes(m.size)}</td></tr>`)));
+
+    html += card('🔑 AI provider credentials', `${(usage.providers || []).length} found`, (usage.providers || []).length === 0 ? empty('No plaintext AI provider credentials found.')
+      : '<p style="color:var(--text-dim);font-size:.75rem;margin-bottom:.5rem">Key values are never read into the report; only where a key appears.</p>'
+        + table(['Provider', 'Where', 'Detected by', 'File'], usage.providers.map(p => `<tr><td>${esc(p.provider)}</td><td>${esc(p.source)}</td><td>${esc(p.variable || 'key format')}</td><td style="font-size:.72rem;word-break:break-all">${esc(p.path)}</td></tr>`)));
+
+    html += card('📚 AI SDKs in dependencies', `${(usage.sdks || []).length} SDKs`, (usage.sdks || []).length === 0 ? empty('No AI SDKs in the dependency inventory.')
+      : table(['Ecosystem', 'SDK', 'Versions', 'Projects'], usage.sdks.map(s => `<tr><td>${esc(s.ecosystem)}</td><td>${esc(s.name)}</td><td style="font-size:.72rem">${s.versions.map(esc).join(', ')}</td><td>${s.projects}</td></tr>`)));
+
+    html += card('🧩 Editors found by structure', `${editors.length}`, editors.length === 0 ? empty('No additional VS Code-family editors beyond the known ones.')
+      : `<p style="font-size:.8rem">${editors.map(esc).join(', ')} — their extensions are listed in the Extensions panel.</p>`);
+    html += `</div>`;
+  }
 
   // ── SCRIPTS, HOOKS & AI PANEL ──
   const sevTag = (sev) => `<span class="sev sev-${esc(sev)}">${esc(sev)}</span>`;
@@ -449,7 +487,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<script>
 const P=${scriptJson(searchPkgs)};
 let ecoF='all';
-function showPanel(n){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));const el=document.getElementById('panel-'+n);if(el)el.classList.add('active');document.querySelectorAll('.nav-item').forEach(i=>{const labels={overview:'📊',search:'🔍',threats:'🛡️',findings:'⚠️',npm:'📦',pypi:'🐍',go:'🔷',extensions:'🔌',mcp:'🔗',hygiene:'🪝'};if(i.textContent.includes(labels[n]))i.classList.add('active')})}
+function showPanel(n){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));const el=document.getElementById('panel-'+n);if(el)el.classList.add('active');document.querySelectorAll('.nav-item').forEach(i=>{const labels={overview:'📊',search:'🔍',threats:'🛡️',findings:'⚠️',npm:'📦',pypi:'🐍',go:'🔷',extensions:'🔌',mcp:'🔗',hygiene:'🪝',ai:'🤖'};if(i.textContent.includes(labels[n]))i.classList.add('active')})}
 function globalFilter(){const q=document.getElementById('globalSearch').value.toLowerCase();const rows=document.querySelectorAll('#searchTableBody tr');let c=0;rows.forEach(r=>{const s=r.dataset.s;const e=r.dataset.eco;const t=r.classList.contains('threat-row');let em=ecoF==='all'||e===ecoF||(ecoF==='threats'&&t);let tm=!q||s.includes(q);const show=em&&tm;r.style.display=show?'':'none';if(show)c++});document.getElementById('searchCount').textContent=c.toLocaleString()}
 function setEcoFilter(el,e){document.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));el.classList.add('active');ecoF=e;globalFilter()}
 function filterTable(input){const f=input.value.toLowerCase();const t=input.parentElement.querySelector('table');if(!t)return;t.querySelectorAll('tbody tr').forEach(r=>{r.style.display=r.textContent.toLowerCase().includes(f)?'':'none'})}

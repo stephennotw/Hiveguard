@@ -21,6 +21,11 @@
     "high kim/.githooks/post-merge (core.hooksPath (global)) [base64-decode]",
     "medium kim/Library/Developer/side-project/.git/hooks/pre-push (.git/hooks) [symlink-outside-repo]"
   ],
+  "mcp_servers": [],
+  "models": [],
+  "ai_credentials": [],
+  "ai_sdks": [],
+  "editors_discovered": [],
   "ai_files": [
     "Claude Code: kim/.claude/CLAUDE.md",
     "Claude Code: kim/.claude/settings.json",

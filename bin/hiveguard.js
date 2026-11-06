@@ -51,6 +51,9 @@ const secretsScanner = require(path.join(SRC_ROOT, 'scanners', 'secrets-hygiene'
 const lifecycleScanner = require(path.join(SRC_ROOT, 'scanners', 'lifecycle-scripts'));
 const gitHooksScanner = require(path.join(SRC_ROOT, 'scanners', 'git-hooks'));
 const aiInstructionsScanner = require(path.join(SRC_ROOT, 'scanners', 'ai-instructions'));
+const aiModelsScanner = require(path.join(SRC_ROOT, 'scanners', 'ai-models'));
+const aiUsageScanner = require(path.join(SRC_ROOT, 'scanners', 'ai-usage'));
+const { agentRoots, mcpCandidates, editorForks } = require(path.join(SRC_ROOT, 'utils', 'ai-roots'));
 
 // Threat intel
 const { loadThreatIntel } = require(path.join(SRC_ROOT, 'threat-intel', 'sync'));
@@ -74,6 +77,7 @@ function parseArgs() {
     scanDirs: null,
     customIntelDirs: [],
     usersRoot: null,
+    normalPriority: false,
     noReport: false,
     noSecrets: false,
     maxDepth: 4,
@@ -91,6 +95,9 @@ function parseArgs() {
         break;
       case '--offline':
         opts.offline = true;
+        break;
+      case '--normal-priority':
+        opts.normalPriority = true;
         break;
       case '--users-root':
         opts.usersRoot = args[++i] || null;
@@ -134,6 +141,7 @@ function showHelp() {
     --offline            Use bundled baseline catalogs only (no GitHub sync)
     --scan-dirs <dirs>   Comma-separated scan directories
     --users-root <dir>   Scan user profiles under <dir> only (e.g. a mounted disk image)
+    --normal-priority    Run at normal CPU priority (default: below normal)
     --custom-intel <dir> Dir(s) with custom threat intel JSON catalogs
     --no-report          Skip HTML report generation
     --no-secrets         Skip secrets hygiene scan
@@ -183,6 +191,15 @@ async function main() {
 
   const startTime = Date.now();
 
+  // Stay out of the way of the user's own work on shared workstations.
+  if (!opts.normalPriority) {
+    try {
+      require('os').setPriority(0, require('os').constants.priority.PRIORITY_BELOW_NORMAL);
+    } catch (e) {
+      logger.debug('core', `Could not lower process priority: ${e.message}`);
+    }
+  }
+
   if (!opts.json) {
     process.stderr.write('\n');
     process.stderr.write('  ╔═══════════════════════════════════════════════════╗\n');
@@ -217,7 +234,15 @@ async function main() {
   let t0 = Date.now();
   // The same walk records project directories for the git-hook and AI-file scanners
   const projectDirs = [];
-  const foundFiles = findMultipleFiles(platform.projectRoots, lockfileNames, { ...scanOpts, onDir: projectDirCollector(projectDirs) });
+  const modelCandidates = [];
+  const envFiles = [];
+  const collectEnvFiles = aiUsageScanner.envFileCollector(envFiles);
+  const collectProject = projectDirCollector(projectDirs);
+  const collectModels = aiModelsScanner.modelCandidateCollector(modelCandidates);
+  const foundFiles = findMultipleFiles(platform.projectRoots, lockfileNames, {
+    ...scanOpts,
+    onDir: (dir, entries, info) => { collectProject(dir, entries, info); collectModels(dir, entries, info); collectEnvFiles(dir, entries, info); },
+  });
   logger.info('core', `Directory walk completed in ${Date.now() - t0}ms`);
 
   // Pass pre-found files to each scanner (avoids redundant walks)
@@ -234,9 +259,21 @@ async function main() {
   scanResults.composer = timedScan('composer', () => composerScanner.scan(platform, scanOpts, foundFiles.get('composer.lock')));
   scanResults.rubygems = timedScan('rubygems', () => rubygemsScanner.scan(platform, scanOpts, foundFiles.get('Gemfile.lock')));
   scanResults.cargo = timedScan('cargo', () => cargoScanner.scan(platform, scanOpts, foundFiles.get('Cargo.lock')));
+  // AI tool locations by structure, not product name (see src/utils/ai-roots.js)
+  const aiRoots = timedScan('ai-roots', () => agentRoots(platform));
+  const knownExtDirs = new Set(Object.values(platform.editorExtensionDirs || {}).flat().map(p => path.resolve(p)));
+  const discoveredEditors = [];
+  for (const [label, dirs] of Object.entries(editorForks(platform, aiRoots))) {
+    const fresh = dirs.filter(d => !knownExtDirs.has(path.resolve(d)));
+    if (fresh.length === 0) continue;
+    platform.editorExtensionDirs = platform.editorExtensionDirs || {};
+    platform.editorExtensionDirs[label] = [...(platform.editorExtensionDirs[label] || []), ...fresh];
+    discoveredEditors.push(label);
+  }
   scanResults.editor_extensions = timedScan('editor-ext', () => editorExtScanner.scan(platform));
+  scanResults.editor_extensions.discovered_editors = discoveredEditors;
   scanResults.browser_extensions = timedScan('browser-ext', () => browserExtScanner.scan(platform));
-  scanResults.mcp_configs = timedScan('mcp', () => mcpScanner.scan(platform));
+  scanResults.mcp_configs = timedScan('mcp', () => mcpScanner.scan(platform, scanOpts, mcpCandidates(platform, aiRoots)));
 
   if (!opts.noSecrets) {
     scanResults.secrets_hygiene = timedScan('secrets', () => secretsScanner.scan(platform, scanOpts));
@@ -247,7 +284,7 @@ async function main() {
   const lifecycleProjects = [...(scanResults.npm.projects || [])];
   const lifecyclePaths = new Set(lifecycleProjects.map(p => path.resolve(p.project_path)));
   for (const d of projectDirs) {
-    if (d.packageJson && !lifecyclePaths.has(path.resolve(d.dir))) {
+    if (d.packageJson && !d.cloud && !lifecyclePaths.has(path.resolve(d.dir))) {
       lifecyclePaths.add(path.resolve(d.dir));
       lifecycleProjects.push({ project: path.basename(d.dir), project_path: d.dir });
     }
@@ -255,6 +292,7 @@ async function main() {
   scanResults.lifecycle_scripts = timedScan('lifecycle', () => lifecycleScanner.scan(platform, scanOpts, lifecycleProjects));
   scanResults.git_hooks = timedScan('git-hooks', () => gitHooksScanner.scan(platform, scanOpts, projectDirs));
   scanResults.ai_instructions = timedScan('ai-instruct', () => aiInstructionsScanner.scan(platform, scanOpts, projectDirs));
+  scanResults.ai_models = timedScan('ai-models', () => aiModelsScanner.scan(platform, scanOpts, modelCandidates));
 
   // Discovered user profiles for attributing findings
   const userHomes = platform.userHomes || [];
@@ -290,6 +328,9 @@ async function main() {
 
   // Step 5: Build flat package list for threat matching + CVE checking
   const flatPackages = buildFlatPackageList(scanResults, userHomes);
+  scanResults.ai_usage = timedScan('ai-usage', () => aiUsageScanner.scan(platform, scanOpts, {
+    envFiles, mcpConfigs: scanResults.mcp_configs.configs || [], packages: flatPackages,
+  }));
   logger.info('core', `Total components inventoried: ${flatPackages.length}`);
 
   // Step 6: Threat intel matching (Bumblebee catalogs)
@@ -354,6 +395,11 @@ async function main() {
   }
   for (const f of cveMap.values()) {
     allFindings.push(f);
+  }
+
+  // MCP server findings (unpinned package runners)
+  for (const f of (scanResults.mcp_configs.findings || [])) {
+    allFindings.push({ user: resolveUser(f.path, userHomes), version: '', ...f });
   }
 
   // Secrets findings
@@ -473,6 +519,11 @@ async function main() {
         git_hooks_suspicious: scanResults.git_hooks.suspicious,
         ai_instruction_files: scanResults.ai_instructions.files_found,
         ai_instruction_suspicious: scanResults.ai_instructions.suspicious,
+        ai_models: scanResults.ai_models.total,
+        ai_models_pickle: scanResults.ai_models.pickle_count,
+        ai_provider_credentials: scanResults.ai_usage.providers.length,
+        ai_sdks: scanResults.ai_usage.sdks.length,
+        editors_discovered: (scanResults.editor_extensions.discovered_editors || []).length,
       },
     },
     findings: allFindings,
@@ -628,6 +679,19 @@ function buildFlatPackageList(scanResults, userHomes) {
         version: ext.version,
         user: resolveUser(ext.path, userHomes),
         project: editor, source: ext.id,
+        confidence: 'high',
+      });
+    }
+  }
+
+  // MCP servers started from a pinned package version can be threat-matched like any dependency
+  for (const cfg of (scanResults.mcp_configs.configs || [])) {
+    for (const srv of (cfg.servers || [])) {
+      if (!srv.package || !srv.package_version) continue;
+      packages.push({
+        ecosystem: srv.package_ecosystem, name: srv.package, version: srv.package_version,
+        user: resolveUser(cfg.config_path, userHomes),
+        project: `MCP: ${srv.name} (${cfg.app || cfg.config_name})`, source: cfg.config_path,
         confidence: 'high',
       });
     }

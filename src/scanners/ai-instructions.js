@@ -10,6 +10,12 @@ const SCANNER_ID = 'ai-instructions';
 const MAX_FILE_BYTES = 64 * 1024;
 const MAX_DIR_FILES = 200;
 
+// Generic agent layout inside any dot-folder (~/.gemini, .cursor, a future agent's
+// folder...): markdown under these subfolders, and skills/<name>/SKILL.md.
+const GENERIC_MD_SUBDIRS = ['rules', 'commands', 'agents', 'prompts', 'instructions'];
+const GENERIC_DOT_SKIP = new Set(['.git', '.svn', '.hg', '.cache', '.npm', '.yarn', '.pnpm-store', '.cargo', '.rustup',
+  '.m2', '.gradle', '.nuget', '.local', '.venv', '.tox', '.nvm', '.pyenv', '.rbenv', '.conda', '.docker', '.terraform']);
+
 // kind: 'text' (default) | 'claude-settings' | 'vscode-tasks'; dir entries list files with `exts`.
 const PROJECT_FILES = [
   { file: '.cursorrules', tool: 'Cursor' },
@@ -81,11 +87,14 @@ function scan(platform, opts = {}, projectDirs) {
   const reportedLinks = new Set();
 
   const ctx = { findings, inventory, seen, reportedLinks };
-  for (const { dir } of dirs) {
-    for (const spec of PROJECT_FILES) inspectSpec(spec, dir, dir, ctx, 'project');
+  // Specific entries first so their product labels win; generic discovery fills the rest.
+  for (const { dir, cloud } of dirs) {
+    for (const spec of PROJECT_FILES) inspectSpec(spec, dir, dir, ctx, 'project', !!cloud);
+    inspectGenericDotDirs(dir, ctx, 'project', !!cloud);
   }
   for (const home of (platform.userHomes || [])) {
     for (const spec of USER_FILES) inspectSpec(spec, home, home, ctx, 'user');
+    inspectGenericDotDirs(home, ctx, 'user', false);
   }
 
   const suspiciousCount = findings.filter(f => f.severity !== 'info').length;
@@ -107,7 +116,45 @@ function scan(platform, opts = {}, projectDirs) {
 }
 
 // scope: 'project' (files that arrive with a repository) or 'user' (the user's own config).
-function inspectSpec(spec, baseDir, trustedRoot, ctx, scope) {
+/** Agent files in every dot-folder of baseDir, labelled by folder name (no product list). */
+function inspectGenericDotDirs(baseDir, ctx, scope, namesOnly) {
+  for (const e of listEntries(baseDir)) {
+    if (!e.isDirectory() || e.isSymbolicLink() || !e.name.startsWith('.') || GENERIC_DOT_SKIP.has(e.name.toLowerCase())) continue;
+    const dot = path.join(baseDir, e.name);
+    const spec = { tool: e.name.slice(1) };
+    for (const sub of GENERIC_MD_SUBDIRS) {
+      const subDir = path.join(dot, sub);
+      for (const f of listEntries(subDir).filter(x => x.isFile() && /\.(md|mdc)$/i.test(x.name)).slice(0, MAX_DIR_FILES)) {
+        inspectFile(spec, path.join(subDir, f.name), baseDir, baseDir, ctx, scope, namesOnly);
+      }
+    }
+    const skillsDir = path.join(dot, 'skills');
+    for (const skill of listEntries(skillsDir).filter(x => x.isDirectory() && !x.isSymbolicLink()).slice(0, MAX_DIR_FILES)) {
+      const skillDir = path.join(skillsDir, skill.name);
+      const skillMd = listEntries(skillDir).find(x => x.isFile() && x.name.toLowerCase() === 'skill.md');
+      if (skillMd) inspectFile({ ...spec, skillDir }, path.join(skillDir, skillMd.name), baseDir, baseDir, ctx, scope, namesOnly);
+    }
+  }
+}
+
+function listEntries(dir) {
+  try { return fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+}
+
+// Files bundled with a skill (scripts the agent may run), counted two levels deep.
+function countFiles(dir, depth = 0) {
+  let n = 0;
+  for (const e of listEntries(dir)) {
+    if (e.isSymbolicLink()) continue;
+    if (e.isFile()) n++;
+    else if (e.isDirectory() && depth < 1) n += countFiles(path.join(dir, e.name), depth + 1);
+  }
+  return n;
+}
+
+// namesOnly: cloud-synced folder; inventory files without reading them.
+function inspectSpec(spec, baseDir, trustedRoot, ctx, scope, namesOnly = false) {
+  if (namesOnly && spec.kind === 'vscode-tasks') return; // relevant only if it auto-runs, which needs a read
   const fullPath = path.join(baseDir, spec.file);
   const st = statSafe(fullPath);
   if (!st) return;
@@ -115,13 +162,13 @@ function inspectSpec(spec, baseDir, trustedRoot, ctx, scope) {
   if (spec.dir) {
     if (!st.isDirectory()) return;
     const files = readdirSafe(fullPath).filter(f => spec.exts.some(e => f.endsWith(e))).slice(0, MAX_DIR_FILES);
-    for (const f of files) inspectFile({ ...spec, dir: false }, path.join(fullPath, f), baseDir, trustedRoot, ctx, scope);
+    for (const f of files) inspectFile({ ...spec, dir: false }, path.join(fullPath, f), baseDir, trustedRoot, ctx, scope, namesOnly);
     return;
   }
-  if (st.isFile()) inspectFile(spec, fullPath, baseDir, trustedRoot, ctx, scope);
+  if (st.isFile()) inspectFile(spec, fullPath, baseDir, trustedRoot, ctx, scope, namesOnly);
 }
 
-function inspectFile(spec, filePath, project, trustedRoot, ctx, scope) {
+function inspectFile(spec, filePath, project, trustedRoot, ctx, scope, namesOnly = false) {
   let real;
   try { real = fs.realpathSync.native(filePath); } catch { return; }
   const st = statSafe(real);
@@ -130,6 +177,7 @@ function inspectFile(spec, filePath, project, trustedRoot, ctx, scope) {
   const identity = st.ino ? `${st.dev}:${st.ino}` : real;
   if (ctx.seen.has(identity)) return;
   const item = { path: filePath, tool: spec.tool, type: path.extname(filePath) || 'text', size: st.size, project };
+  if (spec.skillDir) item.skill_files = Math.max(0, countFiles(spec.skillDir) - 1);
 
   let realRoot = trustedRoot;
   try { realRoot = fs.realpathSync.native(trustedRoot); } catch { /* keep as is */ }
@@ -148,6 +196,11 @@ function inspectFile(spec, filePath, project, trustedRoot, ctx, scope) {
   }
   // Marked only once read, so a link reported above never hides the real file's own scan.
   ctx.seen.add(identity);
+  if (namesOnly) {
+    item.content_not_read = 'cloud-synced';
+    ctx.inventory.push(item);
+    return;
+  }
 
   const content = readFileSafe(real, { maxBytes: MAX_FILE_BYTES });
   ctx.inventory.push(item);

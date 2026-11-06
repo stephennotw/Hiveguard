@@ -17,6 +17,11 @@
   "git_hooks": [
     "info dana/projects/webapp/.husky/_/pre-commit (core.hooksPath (repo)) []"
   ],
+  "mcp_servers": [],
+  "models": [],
+  "ai_credentials": [],
+  "ai_sdks": [],
+  "editors_discovered": [],
   "ai_files": [
     "Claude Code: dana/.claude/settings.json hooks=1",
     "Claude Code: dana/projects/webapp/CLAUDE.md"

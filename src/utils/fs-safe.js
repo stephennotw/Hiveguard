@@ -126,11 +126,26 @@ const DISCOVERY_SKIP = new Set([
 ]);
 
 /**
+ * Cloud-sync folders. Files there may be online-only placeholders that the OS downloads
+ * when read, so scanners only look at names inside them, never contents.
+ */
+function isCloudSyncedName(name) {
+  const lower = name.toLowerCase();
+  return lower.startsWith('onedrive') || lower === 'dropbox' || lower === 'google drive'
+    || lower === 'icloud drive' || lower === 'cloudstorage' || lower === 'mobile documents';
+}
+
+function isCloudSyncedPath(p) {
+  return path.resolve(p).split(path.sep).some(isCloudSyncedName);
+}
+
+/**
  * Walk directories up to maxDepth, yielding files matching a filter.
  * Respects symlink safety and skips unreadable dirs.
  * Uses a built-in skip set plus caller-supplied extras for O(1) lookups.
  *
- * opts.onDir(dirPath, dirents) is called for every directory visited. When it is
+ * opts.onDir(dirPath, dirents, { cloud }) is called for every directory visited
+ * (cloud: inside a cloud-sync folder, see isCloudSyncedName). When it is
  * set, directories in the built-in skip set are still entered for onDir (unless in
  * DISCOVERY_SKIP), but no files are matched inside them, so file results are
  * unchanged by passing onDir.
@@ -140,7 +155,7 @@ function walkSync(dir, opts = {}) {
   const results = [];
   const extraSkip = skipDirs.length > 0 ? new Set(skipDirs) : null;
 
-  function walk(currentDir, depth, filesSuppressed) {
+  function walk(currentDir, depth, filesSuppressed, cloud) {
     if (depth > maxDepth) return;
     let entries;
     try {
@@ -148,7 +163,7 @@ function walkSync(dir, opts = {}) {
     } catch {
       return;
     }
-    if (onDir) onDir(currentDir, entries);
+    if (onDir) onDir(currentDir, entries, { cloud });
 
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
@@ -157,10 +172,11 @@ function walkSync(dir, opts = {}) {
         const lower = entry.name.toLowerCase();
         if (extraSkip && extraSkip.has(lower)) continue;
         const skipped = BUILTIN_SKIP.has(lower) || lower.startsWith('onedrive');
+        const childCloud = cloud || isCloudSyncedName(entry.name);
         if (!skipped) {
-          walk(path.join(currentDir, entry.name), depth + 1, filesSuppressed);
+          walk(path.join(currentDir, entry.name), depth + 1, filesSuppressed, childCloud);
         } else if (onDir && !DISCOVERY_SKIP.has(lower)) {
-          walk(path.join(currentDir, entry.name), depth + 1, true);
+          walk(path.join(currentDir, entry.name), depth + 1, true, childCloud);
         }
       } else if (entry.isFile() && !filesSuppressed) {
         if (!filter || filter(entry.name, path.join(currentDir, entry.name))) {
@@ -170,7 +186,7 @@ function walkSync(dir, opts = {}) {
     }
   }
 
-  walk(dir, 0, false);
+  walk(dir, 0, false, onDir ? isCloudSyncedPath(dir) : false);
   return results;
 }
 
@@ -222,11 +238,12 @@ const PROJECT_MARKERS = new Set([
 
 /**
  * Returns an onDir callback for walkSync that records project directories into `out`
- * as { dir, gitDir, packageJson } — gitDir: holds a .git dir or file; packageJson:
- * holds a package.json (an npm/pnpm/yarn project, installed or not).
+ * as { dir, gitDir, packageJson, cloud } — gitDir: holds a .git dir or file; packageJson:
+ * holds a package.json (an npm/pnpm/yarn project, installed or not); cloud: inside a
+ * cloud-sync folder, so only names may be inspected.
  */
 function projectDirCollector(out) {
-  return (dir, entries) => {
+  return (dir, entries, info = {}) => {
     let isProject = false;
     let gitDir = false;
     let packageJson = false;
@@ -238,7 +255,7 @@ function projectDirCollector(out) {
         if (e.name === 'package.json' && e.isFile()) packageJson = true;
       }
     }
-    if (isProject || gitDir) out.push({ dir, gitDir, packageJson });
+    if (isProject || gitDir) out.push({ dir, gitDir, packageJson, cloud: !!info.cloud });
   };
 }
 
@@ -263,4 +280,6 @@ module.exports = {
   findMultipleFiles,
   findProjectDirs,
   projectDirCollector,
+  isCloudSyncedName,
+  isCloudSyncedPath,
 };

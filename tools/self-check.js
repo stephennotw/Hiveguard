@@ -82,6 +82,24 @@ for (const [k, v] of count(ai.inventory || [], i => `${i.tool}: ${path.basename(
 }
 
 add();
+add('AI on this machine (tool folder names, provider and SDK names only)');
+const ecos = result.ecosystems || {};
+const mcpCfgs = (ecos.mcp_configs && ecos.mcp_configs.configs) || [];
+const servers = mcpCfgs.flatMap(c => c.servers.map(s => ({ app: c.app || c.config_name, ...s })));
+add(`  MCP servers: ${servers.length} (${servers.filter(s => s.unpinned).length} unpinned)`);
+for (const [k, v] of count(servers, s => s.app)) add(`    ${String(v).padStart(4)} x ${k}`);
+const editorsFound = (ecos.editor_extensions && ecos.editor_extensions.discovered_editors) || [];
+if (editorsFound.length) add(`  editors found by structure: ${editorsFound.join(', ')}`);
+const am = ecos.ai_models || {};
+add(`  local models: ${am.total || 0} (${((am.total_size || 0) / 1073741824).toFixed(1)} GB, ${am.pickle_count || 0} pickle-format)`);
+for (const [k, v] of count(am.models || [], m => `${m.store || 'loose file'}: ${m.format}`)) add(`    ${String(v).padStart(4)} x ${k}`);
+const au = ecos.ai_usage || {};
+add(`  AI provider credentials in plain text: ${(au.providers || []).length}`);
+for (const [k, v] of count(au.providers || [], p => `${p.provider} (${p.source})`)) add(`    ${String(v).padStart(4)} x ${k}`);
+add(`  AI SDKs in dependencies: ${(au.sdks || []).length}`);
+for (const sdk of (au.sdks || []).slice(0, 15)) add(`    ${sdk.ecosystem}:${sdk.name} in ${sdk.projects} project(s)`);
+
+add();
 add('Threat intel');
 const ti = result.threat_intel || {};
 add(`  catalogs ${ti.catalogs_loaded} (${ti.source}) | known-bad versions ${ti.total_known_bad_versions} | matches ${ti.matches}`);

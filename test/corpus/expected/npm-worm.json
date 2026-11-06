@@ -20,5 +20,10 @@
     "critical suspicious_lifecycle_script lee/projects/api/node_modules/@beproduct/nestjs-auth [known-worm-filename]"
   ],
   "git_hooks": [],
+  "mcp_servers": [],
+  "models": [],
+  "ai_credentials": [],
+  "ai_sdks": [],
+  "editors_discovered": [],
   "ai_files": []
 }
