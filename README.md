@@ -237,6 +237,10 @@ HiveGuard inventories AI tooling by **structure, not product name**, so new tool
 | Provider credentials | Well-known variable names or key formats in `.env` files, shell/PowerShell profiles and MCP configs. Only the provider, file and variable name are reported, never the value. |
 | AI SDKs | ~80 SDK packages tagged in the existing dependency inventory. |
 
+A short list of common AI apps that leave no structural footprint (for example the ChatGPT desktop app) is kept in `data/ai-apps.json` and used only to report "installed". Each entry lists per-OS locations; edit that file to add or correct an app (the `observed` flag marks entries confirmed on a real endpoint).
+
+MCP servers started through a wrapper (security proxies, launchers: `<wrapper> … npx foo`) are unwrapped so the real package is checked; the wrapper name is recorded.
+
 Files inside cloud-sync folders (OneDrive, Dropbox, Google Drive, iCloud) are listed by name only and never read, because reading an online-only file makes the OS download it. HiveGuard also runs at below-normal CPU priority by default (`--normal-priority` to opt out).
 
 ## Threat Intelligence

@@ -166,7 +166,15 @@ function describeServer(name, cfg, scope) {
     has_credentials: envKeys.some(k => CRED_KEY.test(k)),
   };
   if (scope) server.project = scope;
-  const pkg = packageSpec(server.command, args);
+  let pkg = packageSpec(server.command, args);
+  if (!pkg && server.command) {
+    // Wrapped servers (security proxies, launchers): "<wrapper> [opts] [--] npx -y foo".
+    const i = args.findIndex(a => RUNNERS.has(commandBase(a)));
+    if (i >= 0) {
+      pkg = packageSpec(args[i], args.slice(i + 1));
+      if (pkg) server.wrapped_by = commandBase(server.command);
+    }
+  }
   if (pkg) {
     server.package = pkg.name;
     server.package_version = pkg.version;
@@ -181,9 +189,12 @@ function describeServer(name, cfg, scope) {
  * pipx run (also behind Windows "cmd /c"). Returns { ecosystem, name, version|null }
  * or null for anything else (local binaries, scripts, docker, ...).
  */
+const RUNNERS = new Set(['npx', 'bunx', 'pnpm', 'yarn', 'uvx', 'pipx']);
+const commandBase = (p) => String(p).split(/[\\/]/).pop().toLowerCase().replace(/\.(cmd|exe|bat)$/, '');
+
 function packageSpec(command, args) {
   if (!command) return null;
-  const base = (p) => String(p).split(/[\\/]/).pop().toLowerCase().replace(/\.(cmd|exe|bat)$/, '');
+  const base = commandBase;
   let cmd = base(command);
   let rest = [...args];
   if (cmd === 'cmd' && /^\/c$/i.test(rest[0] || '')) {

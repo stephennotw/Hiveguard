@@ -105,3 +105,28 @@ describe('MCP env literals vs references', () => {
     assert.ok(entry.cfg.env.PERPLEXITY_API_KEY);
   });
 });
+
+describe('MCP servers behind a wrapper', () => {
+  it('finds the real package behind proxy/launcher commands and records the wrapper', () => {
+    const entries = mcp.parseJsonServers(JSON.stringify({ mcpServers: {
+      a: { command: 'C:\\Program Files\\SecProxy\\sec-mcp-proxy.exe', args: ['--policy', 'corp', '--', 'npx', '-y', 'github-mcp@2.1.0'] },
+      b: { command: '/opt/gw/mcp-gateway', args: ['run', 'uvx', 'mcp-server-time'] },
+      c: { command: '/opt/gw/mcp-gateway', args: ['--target', 'https://api.example/mcp'] },
+    } }), false);
+    const r = mcp.scan({ mcpConfigPaths: [] }, {}, []);
+    assert.equal(r.configs.length, 0);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-wrap-'));
+    try {
+      const file = path.join(tmp, 'mcp.json');
+      fs.writeFileSync(file, JSON.stringify({ mcpServers: Object.fromEntries(entries.map(e => [e.name, e.cfg])) }));
+      const scanned = mcp.scan({ mcpConfigPaths: [] }, {}, [{ path: file, label: 'x' }]);
+      const s = Object.fromEntries(scanned.configs[0].servers.map(v => [v.name, v]));
+      assert.deepEqual([s.a.package, s.a.package_version, s.a.wrapped_by], ['github-mcp', '2.1.0', 'sec-mcp-proxy']);
+      assert.deepEqual([s.b.package, s.b.unpinned, s.b.wrapped_by], ['mcp-server-time', true, 'mcp-gateway']);
+      assert.equal(s.c.package, undefined);
+      assert.deepEqual(scanned.findings.map(f => f.server), ['b']);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

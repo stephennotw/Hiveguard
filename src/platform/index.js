@@ -44,7 +44,10 @@ function getPlatform(customScanDirs, opts = {}) {
   // Generate config for each user home and merge them
   const configs = userHomes.map(home => getConfig(home));
   let config = mergeConfigs(configs);
-  if (usersRoot) config = restrictToRoot(config, usersRoot);
+  if (usersRoot) {
+    config = restrictToRoot(config, usersRoot);
+    config.usersRoot = usersRoot;
+  }
 
   // Expose discovered user homes for username extraction in findings
   config.userHomes = userHomes;

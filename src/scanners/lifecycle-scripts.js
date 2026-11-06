@@ -56,6 +56,17 @@ const FILE_PATTERNS = [
   { pattern: /\.(ssh|aws)[\\/]|\bid_rsa\b|\.npmrc\b/, label: 'credential-file-access', severity: 'medium' },
 ];
 
+// A "curl ... | sh" pipeline needs a shell. In JavaScript it only runs if the file can
+// reach one; otherwise it is text, e.g. bun's install.js puts its installer command in an
+// Error message and only spawnSync()s binaries without a shell.
+const SHELL_SINKS = [
+  /\bexec(Sync)?\s*\(/,
+  /\bshell\s*:\s*(true|['"])/,
+  /\b(spawn|spawnSync|execFile|execFileSync)\s*\(\s*['"`]((ba|z)?sh|cmd(\.exe)?|powershell(\.exe)?|pwsh)['"`]/,
+  /\beval\s*\(|\bnew\s+Function\s*\(/,
+];
+const SHELL_PIPE_LABELS = new Set(['pipe-to-shell']);
+
 // Install-hook payload filenames from Shai-Hulud / Mini Shai-Hulud style worms
 const KNOWN_IOC_FILES = new Set(['setup_bun.js', 'bun_environment.js', 'router_runtime.js']);
 
@@ -292,7 +303,12 @@ function inspectScriptFile(absPath, relPath) {
   }
 
   const content = readFileSafe(absPath, { maxBytes: MAX_SCRIPT_FILE_BYTES });
-  if (content) hits.push(...matchPatterns(FILE_PATTERNS, content));
+  if (!content) return hits;
+  let fileHits = matchPatterns(FILE_PATTERNS, content);
+  if (/\.(c?js|mjs|ts)$/i.test(absPath) && !SHELL_SINKS.some(re => re.test(content))) {
+    fileHits = fileHits.filter(h => !SHELL_PIPE_LABELS.has(h.label));
+  }
+  hits.push(...fileHits);
   return hits;
 }
 

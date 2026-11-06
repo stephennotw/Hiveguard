@@ -105,6 +105,7 @@ function summarize(result, exitCode, usersRoot) {
     ai_credentials: (eco.ai_usage.providers || []).map(p => `${p.provider} ${p.source} ${p.variable || 'key-format'} ${rel(p.path)}`),
     ai_sdks: (eco.ai_usage.sdks || []).map(s => `${s.ecosystem}:${s.name} ${s.versions.join(',')} x${s.projects}`),
     editors_discovered: eco.editor_extensions.discovered_editors || [],
+    ai_apps: (eco.ai_apps.apps || []).map(a => `${a.id} (${a.user}) ${a.evidence.map(rel).join(', ')}`),
     ai_files: eco.ai_instructions.inventory.map(i => [
       `${i.tool}: ${rel(i.path)}`,
       i.hooks ? ` hooks=${i.hooks.length}` : '',
@@ -116,7 +117,7 @@ function summarize(result, exitCode, usersRoot) {
   };
 }
 
-const LIST_KEYS = ['threat_matches', 'findings', 'git_hooks', 'ai_files', 'mcp_servers', 'models', 'ai_credentials', 'ai_sdks', 'editors_discovered'];
+const LIST_KEYS = ['threat_matches', 'findings', 'git_hooks', 'ai_files', 'mcp_servers', 'models', 'ai_credentials', 'ai_sdks', 'editors_discovered', 'ai_apps'];
 
 function forPlatform(expected, machine) {
   if (!IS_WINDOWS || !machine.posixOnly) return expected;

@@ -40,6 +40,10 @@
   "editors_discovered": [
     "newfork"
   ],
+  "ai_apps": [
+    "codex (ari) ari/.codex",
+    "ollama (ari) ari/.ollama"
+  ],
   "ai_files": [
     "someagent: ari/.someagent/skills/release/SKILL.md skill_files=1"
   ]

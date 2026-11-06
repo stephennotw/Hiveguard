@@ -26,6 +26,10 @@
   "ai_credentials": [],
   "ai_sdks": [],
   "editors_discovered": [],
+  "ai_apps": [
+    "claude-code (kim) kim/.claude",
+    "codex (kim) kim/.codex"
+  ],
   "ai_files": [
     "Agents (AGENTS.md): kim/projects/notes/AGENTS.md",
     "Claude Code: kim/.claude/CLAUDE.md",

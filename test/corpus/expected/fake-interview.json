@@ -26,6 +26,7 @@
   "ai_credentials": [],
   "ai_sdks": [],
   "editors_discovered": [],
+  "ai_apps": [],
   "ai_files": [
     "Agents (AGENTS.md): sam/OneDrive - Contoso/Documents/GitHub/payments/AGENTS.md not-read",
     "Claude Code: sam/Downloads/take-home-assignment/.claude/settings.json hooks=1",

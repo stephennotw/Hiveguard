@@ -53,6 +53,22 @@ async function checkAndPreparePackage() {
 checkAndPreparePackage().then(() => validateBinaryVersion(toPath, "--version"));
 `;
 
+// bun's install.js shape: the curl|bash installer only appears in an error message, and
+// child_process is used without a shell.
+const BUN_INSTALL_JS = `"use strict";
+var import_child_process = require("child_process");
+function spawn(cmd, args, options = {}) {
+  let { status, stdout } = import_child_process.spawnSync(cmd, args, { encoding: "utf8", ...options });
+  return { exitCode: status, stdout };
+}
+function optimizeBun(path2) {
+  let installScript = process.platform === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.com/install | bash";
+  throw new Error(\`Your package manager doesn't seem to support bun. To use bun, install using the following command: \${installScript}\`);
+}
+const { exitCode } = spawn(require.resolve("./bin/bun.exe"), ["--version"]);
+if (exitCode !== 0) optimizeBun(__dirname);
+`;
+
 const CORE_JS_POSTINSTALL_JS = `var fs = require('fs');
 var os = require('os');
 var path = require('path');
@@ -102,12 +118,14 @@ module.exports = [
     build(b) {
       const app = 'dana/projects/webapp';
       b.json(`${app}/package.json`, { name: 'webapp', scripts: { prepare: 'husky', build: 'esbuild src/index.ts --bundle' } });
-      b.json(`${app}/package-lock.json`, lockfile('webapp', [['esbuild', '0.24.0'], ['core-js', '3.39.0'], ['husky', '9.1.7'], ['left-pad', '1.3.0']]));
+      b.json(`${app}/package-lock.json`, lockfile('webapp', [['esbuild', '0.24.0'], ['core-js', '3.39.0'], ['husky', '9.1.7'], ['left-pad', '1.3.0'], ['bun', '1.4.4']]));
       b.json(`${app}/node_modules/esbuild/package.json`, { name: 'esbuild', version: '0.24.0', scripts: { postinstall: 'node install.js' } });
       b.file(`${app}/node_modules/esbuild/install.js`, ESBUILD_INSTALL_JS);
       b.json(`${app}/node_modules/core-js/package.json`, { name: 'core-js', version: '3.39.0', scripts: { postinstall: 'node -e "try{require(\'./postinstall\')}catch(e){}"' } });
       b.file(`${app}/node_modules/core-js/postinstall.js`, CORE_JS_POSTINSTALL_JS);
       b.json(`${app}/node_modules/husky/package.json`, { name: 'husky', version: '9.1.7', bin: { husky: 'bin.js' } });
+      b.json(`${app}/node_modules/bun/package.json`, { name: 'bun', version: '1.4.4', scripts: { postinstall: 'node install.js' } });
+      b.file(`${app}/node_modules/bun/install.js`, BUN_INSTALL_JS);
       b.json(`${app}/node_modules/left-pad/package.json`, { name: 'left-pad', version: '1.3.0' });
       b.file(`${app}/.git/HEAD`, 'ref: refs/heads/main\n');
       b.file(`${app}/.git/config`, '[core]\n\trepositoryformatversion = 0\n\thooksPath = .husky/_\n');

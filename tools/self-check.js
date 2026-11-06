@@ -86,7 +86,11 @@ add('AI on this machine (tool folder names, provider and SDK names only)');
 const ecos = result.ecosystems || {};
 const mcpCfgs = (ecos.mcp_configs && ecos.mcp_configs.configs) || [];
 const servers = mcpCfgs.flatMap(c => c.servers.map(s => ({ app: c.app || c.config_name, ...s })));
-add(`  MCP servers: ${servers.length} (${servers.filter(s => s.unpinned).length} unpinned)`);
+const knownApps = (ecos.ai_apps && ecos.ai_apps.apps) || [];
+add(`  known AI apps present: ${new Set(knownApps.map(a => a.id)).size}`);
+for (const [k, v] of count(knownApps, a => `${a.name} [${a.kind}]`)) add(`    ${String(v).padStart(4)} x ${k}`);
+add(`  MCP servers: ${servers.length} (${servers.filter(s => s.unpinned).length} unpinned, ${servers.filter(s => s.wrapped_by).length} behind a wrapper)`);
+for (const [k, v] of count(servers.filter(s => s.wrapped_by), s => s.wrapped_by)) add(`    wrapper ${k}: ${v} server(s)`);
 const byApp = new Map();
 for (const c of mcpCfgs) {
   if (!c.server_count) continue;

@@ -6,9 +6,9 @@
   ],
   "exit_code": 0,
   "counts": {
-    "components": 4,
+    "components": 5,
     "git_repos": 1,
-    "lifecycle_packages": 6
+    "lifecycle_packages": 7
   },
   "threat_matches": [],
   "findings": [
@@ -22,6 +22,9 @@
   "ai_credentials": [],
   "ai_sdks": [],
   "editors_discovered": [],
+  "ai_apps": [
+    "claude-code (dana) dana/.claude"
+  ],
   "ai_files": [
     "Claude Code: dana/.claude/settings.json hooks=1",
     "Claude Code: dana/projects/webapp/CLAUDE.md"

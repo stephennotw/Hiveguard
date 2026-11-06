@@ -53,6 +53,7 @@ const gitHooksScanner = require(path.join(SRC_ROOT, 'scanners', 'git-hooks'));
 const aiInstructionsScanner = require(path.join(SRC_ROOT, 'scanners', 'ai-instructions'));
 const aiModelsScanner = require(path.join(SRC_ROOT, 'scanners', 'ai-models'));
 const aiUsageScanner = require(path.join(SRC_ROOT, 'scanners', 'ai-usage'));
+const aiAppsScanner = require(path.join(SRC_ROOT, 'scanners', 'ai-apps'));
 const { agentRoots, mcpCandidates, editorForks } = require(path.join(SRC_ROOT, 'utils', 'ai-roots'));
 
 // Threat intel
@@ -295,6 +296,7 @@ async function main() {
   scanResults.git_hooks = timedScan('git-hooks', () => gitHooksScanner.scan(platform, scanOpts, projectDirs));
   scanResults.ai_instructions = timedScan('ai-instruct', () => aiInstructionsScanner.scan(platform, scanOpts, projectDirs));
   scanResults.ai_models = timedScan('ai-models', () => aiModelsScanner.scan(platform, scanOpts, modelCandidates));
+  scanResults.ai_apps = timedScan('ai-apps', () => aiAppsScanner.scan(platform, scanOpts));
 
   // Discovered user profiles for attributing findings
   const userHomes = platform.userHomes || [];
@@ -526,6 +528,7 @@ async function main() {
         ai_provider_credentials: scanResults.ai_usage.providers.length,
         ai_sdks: scanResults.ai_usage.sdks.length,
         editors_discovered: (scanResults.editor_extensions.discovered_editors || []).length,
+        ai_apps_known: new Set(scanResults.ai_apps.apps.map(a => a.id)).size,
       },
     },
     findings: allFindings,
