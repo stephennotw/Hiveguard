@@ -8,7 +8,9 @@
   },
   "scripts": {
     "scan": "node bin/hiveguard.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "self-check": "node tools/self-check.js",
+    "test:corpus:update": "HIVEGUARD_UPDATE_CORPUS=1 node --test test/corpus.test.js"
   },
   "keywords": [
     "supply-chain",

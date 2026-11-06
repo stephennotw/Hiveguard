@@ -12,6 +12,7 @@
  *   --json              Output JSON to stdout (quiet mode for automation)
  *   --offline            Skip threat intel sync (use cached catalogs only)
  *   --scan-dirs <dirs>  Comma-separated list of directories to scan
+ *   --users-root <dir>  Scan user profiles under <dir> only (skips system-wide paths)
  *   --no-report         Skip HTML report generation
  *   --no-secrets        Skip secrets hygiene scan
  *   --max-depth <n>     Max directory depth for lockfile search (default: 4)
@@ -72,6 +73,7 @@ function parseArgs() {
     offline: false,
     scanDirs: null,
     customIntelDirs: [],
+    usersRoot: null,
     noReport: false,
     noSecrets: false,
     maxDepth: 4,
@@ -89,6 +91,9 @@ function parseArgs() {
         break;
       case '--offline':
         opts.offline = true;
+        break;
+      case '--users-root':
+        opts.usersRoot = args[++i] || null;
         break;
       case '--scan-dirs':
         opts.scanDirs = (args[++i] || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -128,6 +133,7 @@ function showHelp() {
     --json               Output JSON to stdout (quiet mode)
     --offline            Use bundled baseline catalogs only (no GitHub sync)
     --scan-dirs <dirs>   Comma-separated scan directories
+    --users-root <dir>   Scan user profiles under <dir> only (e.g. a mounted disk image)
     --custom-intel <dir> Dir(s) with custom threat intel JSON catalogs
     --no-report          Skip HTML report generation
     --no-secrets         Skip secrets hygiene scan
@@ -190,7 +196,7 @@ async function main() {
   logger.info('core', `Host: ${systemInfo.hostname} | OS: ${systemInfo.platform}/${systemInfo.arch} | User: ${systemInfo.username}`);
 
   // Step 2: Platform detection
-  const platform = getPlatform(opts.scanDirs);
+  const platform = getPlatform(opts.scanDirs, { usersRoot: opts.usersRoot });
 
   // Step 3: Threat intel — load into memory (live → baseline → custom)
   const intelResult = await loadThreatIntel({
@@ -236,7 +242,17 @@ async function main() {
     scanResults.secrets_hygiene = timedScan('secrets', () => secretsScanner.scan(platform, scanOpts));
   }
 
-  scanResults.lifecycle_scripts = timedScan('lifecycle', () => lifecycleScanner.scan(platform, scanOpts, scanResults.npm.projects));
+  // Install scripts: lockfile projects plus every package.json directory, so pnpm/yarn
+  // projects and freshly cloned repos (before npm install) are covered too.
+  const lifecycleProjects = [...(scanResults.npm.projects || [])];
+  const lifecyclePaths = new Set(lifecycleProjects.map(p => path.resolve(p.project_path)));
+  for (const d of projectDirs) {
+    if (d.packageJson && !lifecyclePaths.has(path.resolve(d.dir))) {
+      lifecyclePaths.add(path.resolve(d.dir));
+      lifecycleProjects.push({ project: path.basename(d.dir), project_path: d.dir });
+    }
+  }
+  scanResults.lifecycle_scripts = timedScan('lifecycle', () => lifecycleScanner.scan(platform, scanOpts, lifecycleProjects));
   scanResults.git_hooks = timedScan('git-hooks', () => gitHooksScanner.scan(platform, scanOpts, projectDirs));
   scanResults.ai_instructions = timedScan('ai-instruct', () => aiInstructionsScanner.scan(platform, scanOpts, projectDirs));
 

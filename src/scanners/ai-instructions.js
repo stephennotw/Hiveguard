@@ -123,11 +123,11 @@ function inspectSpec(spec, baseDir, trustedRoot, ctx, scope) {
 function inspectFile(spec, filePath, project, trustedRoot, ctx, scope) {
   let real;
   try { real = fs.realpathSync.native(filePath); } catch { return; }
-  if (ctx.seen.has(real)) return;
-  ctx.seen.add(real);
-
   const st = statSafe(real);
   if (!st || !st.isFile()) return;
+  // File identity, not path: CLAUDE.md and claude.md are one file on case-insensitive filesystems.
+  const identity = st.ino ? `${st.dev}:${st.ino}` : real;
+  if (ctx.seen.has(identity)) return;
   const item = { path: filePath, tool: spec.tool, type: path.extname(filePath) || 'text', size: st.size, project };
 
   let realRoot = trustedRoot;
@@ -139,6 +139,8 @@ function inspectFile(spec, filePath, project, trustedRoot, ctx, scope) {
       `AI instruction file for ${spec.tool} at ${filePath} is a symlink to ${real}, outside the project`));
     return;
   }
+  // Marked only once read, so a link reported above never hides the real file's own scan.
+  ctx.seen.add(identity);
 
   const content = readFileSafe(real, { maxBytes: MAX_FILE_BYTES });
   ctx.inventory.push(item);

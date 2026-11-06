@@ -1,0 +1,24 @@
+{
+  "machine": "typical-dev",
+  "description": "Ordinary developer laptop: popular packages with real-world install scripts, husky, pnpm workspace, emoji and Hebrew in CLAUDE.md, user-level Claude hooks. Nothing here should be flagged above medium.",
+  "known_gaps": [
+    "pnpm-lock.yaml is not parsed, so the monorepo contributes no components to threat-intel matching (its node_modules are still checked for install scripts)."
+  ],
+  "exit_code": 0,
+  "counts": {
+    "components": 4,
+    "git_repos": 1,
+    "lifecycle_packages": 6
+  },
+  "threat_matches": [],
+  "findings": [
+    "medium suspicious_ai_instruction dana/projects/webapp/CLAUDE.md [pipe-to-shell]"
+  ],
+  "git_hooks": [
+    "info dana/projects/webapp/.husky/_/pre-commit (core.hooksPath (repo)) []"
+  ],
+  "ai_files": [
+    "Claude Code: dana/.claude/settings.json hooks=1",
+    "Claude Code: dana/projects/webapp/CLAUDE.md"
+  ]
+}

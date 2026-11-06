@@ -1,0 +1,126 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * HiveGuard self-check: runs a normal scan on this machine and prints a summary that
+ * is safe to share — counts, timings and finding categories only. No file paths,
+ * usernames, hostnames or package names are included in the summary.
+ *
+ * The full report (JSON + HTML, which DO contain paths) is kept locally for your own
+ * review and is never uploaded.
+ *
+ *   node tools/self-check.js            # offline scan (no network access)
+ *   node tools/self-check.js --online   # also query OSV.dev / Bumblebee / GitHub
+ */
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const BIN = path.resolve(__dirname, '..', 'bin', 'hiveguard.js');
+const online = process.argv.includes('--online');
+const outDir = path.join(os.tmpdir(), `hiveguard-selfcheck-${Date.now()}`);
+
+if (+process.versions.node.split('.')[0] < 18) {
+  console.error(`Node.js 18 or newer is required (found ${process.version}).`);
+  process.exit(1);
+}
+
+console.error(`Running HiveGuard ${online ? '(online)' : '(offline)'} — this can take a few minutes on a large profile...`);
+
+// Run the CLI in a child that reports its own peak memory on exit.
+const runner = [
+  `process.on('exit', () => process.stderr.write('\\nHG_SELFCHECK_MAXRSS_KB=' + process.resourceUsage().maxRSS + '\\n'));`,
+  `process.argv.splice(1, 0, 'hiveguard');`,
+  `require(${JSON.stringify(BIN)});`,
+].join('\n');
+const args = ['--output', outDir, ...(online ? [] : ['--offline'])];
+const started = Date.now();
+const child = spawnSync(process.execPath, ['-e', runner, '--', ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+const wallMs = Date.now() - started;
+const stderr = (child.stderr || '').replace(/\x1b\[[0-9;]*m/g, '');
+
+const jsonFile = fs.existsSync(outDir) && fs.readdirSync(outDir).find(f => f.endsWith('.json'));
+if (!jsonFile) {
+  console.error(`HiveGuard did not produce a result (exit ${child.status}). Last output:\n${stderr.split('\n').slice(-25).join('\n')}`);
+  process.exit(1);
+}
+const result = JSON.parse(fs.readFileSync(path.join(outDir, jsonFile), 'utf8'));
+
+const lines = [];
+const add = (s = '') => lines.push(s);
+const count = (items, keyFn) => {
+  const m = new Map();
+  for (const it of items) { const k = keyFn(it); m.set(k, (m.get(k) || 0) + 1); }
+  return [...m.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+};
+const triggers = (f) => [...(f.triggers || [])].sort().join(', ') || '-';
+const sevOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+
+add('HiveGuard self-check summary (safe to share: no paths, usernames or package names)');
+add('='.repeat(80));
+add(`HiveGuard ${result.meta.version} | ${os.platform()} ${os.release()} ${os.arch()} | Node ${process.version} | ${os.cpus().length} CPUs | ${Math.round(os.totalmem() / 1073741824)} GB RAM`);
+add(`Mode: ${online ? 'online' : 'offline'} | exit code ${child.status} | wall time ${(wallMs / 1000).toFixed(1)} s | peak memory ${Math.round((+(stderr.match(/HG_SELFCHECK_MAXRSS_KB=(\d+)/) || [])[1] || 0) / 1024)} MB`);
+add(`User profiles scanned: ${(result.meta.users_scanned || []).length}`);
+
+add();
+add('Timings');
+const walk = stderr.match(/Directory walk completed in (\d+)ms/);
+if (walk) add(`  directory walk       ${walk[1].padStart(7)} ms`);
+for (const m of stderr.matchAll(/\[core\]\s+([\w-]+): (\d+)ms/g)) add(`  ${m[1].padEnd(20)} ${m[2].padStart(7)} ms`);
+
+add();
+add('Inventory');
+const e = result.summary.ecosystems || {};
+add(`  components total: ${result.summary.total_components}`);
+for (const [k, v] of Object.entries(e)) add(`  ${k.padEnd(28)} ${v}`);
+const ai = (result.ecosystems && result.ecosystems.ai_instructions) || {};
+add(`  directories checked for AI files: ${ai.projects_scanned || 0}`);
+for (const [k, v] of count(ai.inventory || [], i => `${i.tool}: ${path.basename(i.path)}${i.hooks ? ' (has hooks)' : ''}${i.autorun_tasks ? ' (auto-run tasks)' : ''}${i.symlink_target ? ' (symlink)' : ''}`)) {
+  add(`    ${String(v).padStart(4)} x ${k}`);
+}
+
+add();
+add('Threat intel');
+const ti = result.threat_intel || {};
+add(`  catalogs ${ti.catalogs_loaded} (${ti.source}) | known-bad versions ${ti.total_known_bad_versions} | matches ${ti.matches}`);
+for (const [k, v] of Object.entries(ti.sources || {})) add(`  source ${k}: ${v.status}${v.error ? ` (${v.error})` : ''}`);
+for (const [k, v] of count((result.findings || []).filter(f => f.type === 'supply_chain_compromise'), f => f.catalog)) add(`    ${String(v).padStart(4)} x match in ${k}`);
+
+add();
+add('Findings by severity');
+for (const [k, v] of count(result.findings || [], f => f.severity).sort((a, b) => (sevOrder[a[0]] ?? 9) - (sevOrder[b[0]] ?? 9))) add(`  ${k.padEnd(10)} ${v}`);
+
+add();
+add('Findings by kind (count x severity | category | triggers)');
+const describe = (f) => {
+  switch (f.type) {
+    case 'suspicious_lifecycle_script': return `install script "${f.hook}"${(f.script_files || []).length ? ' (via script file)' : ''}${f.project === '(global)' ? ' [global]' : ''}`;
+    case 'suspicious_git_hook': return `git hook "${f.hook}" (${f.origin || '.git/hooks'})`;
+    case 'suspicious_ai_instruction': return `AI file ${f.tool}: ${path.basename(f.path || '')}`;
+    case 'supply_chain_compromise': return `threat-intel match (${f.ecosystem})`;
+    case 'known_cve': return `known CVE (${f.ecosystem}) ${f.cve || ''}`.trim();
+    default: return f.ecosystem === 'secrets' ? `secrets hygiene: ${f.type}` : f.type;
+  }
+};
+const kinds = count(result.findings || [], f => `${f.severity} | ${describe(f)} | ${f.type === 'supply_chain_compromise' || f.type === 'known_cve' ? '-' : triggers(f)}`)
+  .sort((a, b) => (sevOrder[a[0].split(' ')[0]] ?? 9) - (sevOrder[b[0].split(' ')[0]] ?? 9) || b[1] - a[1]);
+if (kinds.length === 0) add('  none');
+for (const [k, v] of kinds) add(`  ${String(v).padStart(4)} x ${k}`);
+
+const gh = (result.ecosystems && result.ecosystems.git_hooks) || {};
+const customHooks = (gh.findings || []).filter(f => f.severity === 'info');
+if (customHooks.length) {
+  add();
+  add('Custom git hooks not flagged (info)');
+  for (const [k, v] of count(customHooks, f => `"${f.hook}" (${f.origin})`)) add(`  ${String(v).padStart(4)} x ${k}`);
+}
+
+const summary = lines.join('\n') + '\n';
+const summaryFile = path.join(outDir, 'selfcheck-summary.txt');
+fs.writeFileSync(summaryFile, summary);
+
+process.stdout.write('\n' + summary);
+console.error(`\nSummary saved to: ${summaryFile}`);
+console.error(`Full report (contains paths — for your eyes only): ${outDir}`);

@@ -102,11 +102,32 @@ The `.node/` directory is gitignored and never committed to the repo.
 | `--json` | JSON to stdout (quiet mode) | off |
 | `--offline` | Use bundled baseline catalogs only | off |
 | `--scan-dirs <dirs>` | Comma-separated scan roots | auto-detect |
+| `--users-root <dir>` | Enumerate user profiles under `<dir>` instead of `/home`, `/Users` or `C:\Users`, and skip system-wide locations (e.g. scanning a mounted disk image) | off |
 | `--custom-intel <dir>` | Dir(s) with custom threat intel JSON | none |
 | `--no-report` | Skip HTML report | off |
 | `--no-secrets` | Skip secrets hygiene scan | off |
 | `--max-depth <n>` | Max directory traversal depth | 4 |
 | `--verbose` / `-v` | Debug logging | off |
+
+## Self-Check (try it on your own machine)
+
+```bash
+node tools/self-check.js            # offline scan, nothing leaves the machine
+node tools/self-check.js --online   # also query OSV.dev / Bumblebee / GitHub
+```
+
+Runs a normal scan and prints a summary of timings, inventory counts and finding categories. The summary contains no file paths, usernames, hostnames or package names, so it is safe to share; it is also saved as `selfcheck-summary.txt`. The full JSON/HTML report (which does contain paths) stays in a temp folder for your own review.
+
+## Testing
+
+```bash
+npm test                    # unit, end-to-end CLI and corpus tests
+npm run test:corpus:update  # regenerate corpus expectations after an intended change (review the diff!)
+```
+
+The corpus (`test/corpus/`) builds synthetic endpoints — a typical developer laptop, a fake-interview repo, an npm worm, a power user's dotfiles — scans each in isolation with `--users-root`, and compares the results with `test/corpus/expected/*.json`, which also record known detection gaps.
+
+CI (`.github/workflows/ci.yml`) runs the suite on Linux (Node 18 and 22), macOS and Windows, including the `run.bat` / `run.ps1` wrappers. It is opt-in to save Actions minutes: it runs only for pushed commits whose message contains `[ci]`, or when started manually from the Actions tab.
 
 ## Exit Codes
 

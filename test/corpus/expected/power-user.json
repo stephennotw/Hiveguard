@@ -1,0 +1,32 @@
+{
+  "machine": "power-user",
+  "description": "macOS-style profile: repo under ~/Library, global core.hooksPath with a staged payload, a hook symlinked to dotfiles, user-level agent config disabling permission prompts, a jailbreak in ~/.codex/AGENTS.md, and a project rules file symlinked outside the project.",
+  "known_gaps": [],
+  "exit_code": 1,
+  "counts": {
+    "components": 0,
+    "git_repos": 1,
+    "lifecycle_packages": 0
+  },
+  "threat_matches": [],
+  "findings": [
+    "high suspicious_ai_instruction kim/.codex/AGENTS.md [jailbreak-persona]",
+    "high suspicious_ai_instruction kim/shared/CLAUDE.md [prompt-injection]",
+    "high suspicious_git_hook kim/.githooks/post-merge [base64-decode]",
+    "medium suspicious_ai_instruction kim/.claude/settings.json [permission-bypass-mode]",
+    "medium suspicious_ai_instruction kim/projects/notes/CLAUDE.md [symlink-outside-project]",
+    "medium suspicious_git_hook kim/Library/Developer/side-project/.git/hooks/pre-push [symlink-outside-repo]"
+  ],
+  "git_hooks": [
+    "high kim/.githooks/post-merge (core.hooksPath (global)) [base64-decode]",
+    "medium kim/Library/Developer/side-project/.git/hooks/pre-push (.git/hooks) [symlink-outside-repo]"
+  ],
+  "ai_files": [
+    "Claude Code: kim/.claude/CLAUDE.md",
+    "Claude Code: kim/.claude/settings.json",
+    "Claude Code: kim/projects/notes/CLAUDE.md symlink",
+    "Claude Code: kim/shared/CLAUDE.md",
+    "Codex: kim/.codex/AGENTS.md",
+    "Codex: kim/projects/notes/AGENTS.md"
+  ]
+}

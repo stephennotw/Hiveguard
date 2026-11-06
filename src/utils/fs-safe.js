@@ -222,18 +222,23 @@ const PROJECT_MARKERS = new Set([
 
 /**
  * Returns an onDir callback for walkSync that records project directories into `out`
- * as { dir, gitDir } where gitDir is true when the directory holds a .git dir or file.
+ * as { dir, gitDir, packageJson } — gitDir: holds a .git dir or file; packageJson:
+ * holds a package.json (an npm/pnpm/yarn project, installed or not).
  */
 function projectDirCollector(out) {
   return (dir, entries) => {
     let isProject = false;
     let gitDir = false;
+    let packageJson = false;
     for (const e of entries) {
       if (e.isSymbolicLink()) continue;
       if (e.name === '.git' && (e.isDirectory() || e.isFile())) gitDir = true;
-      else if (PROJECT_MARKERS.has(e.name)) isProject = true;
+      else if (PROJECT_MARKERS.has(e.name)) {
+        isProject = true;
+        if (e.name === 'package.json' && e.isFile()) packageJson = true;
+      }
     }
-    if (isProject || gitDir) out.push({ dir, gitDir });
+    if (isProject || gitDir) out.push({ dir, gitDir, packageJson });
   };
 }
 

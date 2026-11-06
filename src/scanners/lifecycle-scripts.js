@@ -59,6 +59,10 @@ const FILE_PATTERNS = [
 // Install-hook payload filenames from Shai-Hulud / Mini Shai-Hulud style worms
 const KNOWN_IOC_FILES = new Set(['setup_bun.js', 'bun_environment.js', 'router_runtime.js']);
 
+// core-js/es5-ext/msw style: node -e "try{require('./postinstall')}catch(e){}". The eval
+// only loads a local file, so the file is inspected instead of flagging the eval.
+const LOCAL_REQUIRE_EVAL = /^\s*node\s+-e\s+(["'])\s*try\s*\{\s*require\(\s*(["'])(\.\/[\w./-]+)\2\s*\)\s*;?\s*\}\s*catch\s*(\(\s*\w*\s*\))?\s*\{\s*\}\s*\1\s*$/;
+
 const SCRIPT_FILE_REF = /\b(?:node|bun|deno|sh|bash)\s+(?:-{1,2}[\w-]+(?:=\S+)?\s+)*["']?([\w./@-]+\.(?:c?js|mjs|ts|sh))\b/g;
 
 function scan(platform, opts = {}, npmProjects) {
@@ -187,10 +191,12 @@ function checkScripts(scripts, packageName, project, pkgDir) {
     if (!script || typeof script !== 'string') continue;
 
     const text = script.slice(0, MAX_SCRIPT_CHARS);
-    const matched = matchPatterns(SCRIPT_PATTERNS, text);
+    const localRequire = text.match(LOCAL_REQUIRE_EVAL);
+    const matched = localRequire ? [] : matchPatterns(SCRIPT_PATTERNS, text);
     const scriptFiles = [];
+    const refs = localRequire ? resolveRequire(localRequire[3], pkgDir) : referencedScriptFiles(text, pkgDir);
 
-    for (const ref of referencedScriptFiles(text, pkgDir)) {
+    for (const ref of refs) {
       const fileHits = inspectScriptFile(ref.abs, ref.rel);
       if (fileHits.length > 0) {
         matched.push(...fileHits);
@@ -216,6 +222,17 @@ function checkScripts(scripts, packageName, project, pkgDir) {
   }
 
   return hits;
+}
+
+// Node's resolution for a local require: exact file, known extensions, then index files.
+function resolveRequire(spec, pkgDir) {
+  if (!pkgDir) return [];
+  const root = path.resolve(pkgDir);
+  const base = path.resolve(root, spec);
+  if (base !== root && !base.startsWith(root + path.sep)) return [];
+  const candidates = [base, ...['.js', '.cjs', '.mjs'].map(e => base + e), ...['index.js', 'index.cjs'].map(i => path.join(base, i))];
+  const found = candidates.find(c => { const st = statSafe(c); return st && st.isFile(); });
+  return found ? [{ abs: found, rel: path.relative(root, found) }] : [];
 }
 
 // Files referenced as `node x.js`, `sh ./install.sh`, ... resolved inside pkgDir only.
