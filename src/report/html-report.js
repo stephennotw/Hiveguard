@@ -367,18 +367,36 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
 
   // ── MCP PANEL ──
   html += `<div class="panel" id="panel-mcp"><h2 style="color:#fff;margin-bottom:1rem">🔗 MCP Configs</h2>`;
-  for (const cfg of (ecosystems.mcp_configs?.configs || [])) {
+  const allMcp = ecosystems.mcp_configs?.configs || [];
+  // Configured servers: one card per config file.
+  for (const cfg of allMcp.filter(c => c.state !== 'available')) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-      <h3>${esc(cfg.app || cfg.config_name)}${cfg.state === 'available' ? ' <span style="font-size:.7rem;color:var(--text-dim);font-weight:400">(catalog — available, not configured)</span>' : ''}${cfg.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(cfg.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${cfg.server_count} servers</span>
+      <h3>${esc(cfg.app || cfg.config_name)}${cfg.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(cfg.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${cfg.server_count} servers</span>
     </div><div class="card-body">`;
     for (const srv of (cfg.servers || [])) {
-      html += `<div class="mcp-entry"><div class="name">${esc(srv.name)}</div>
+      html += `<div class="mcp-entry"><div class="name">${esc(srv.name)}${srv.disabled ? ' <span style="font-size:.7rem;color:var(--text-dim)">(disabled)</span>' : ''}</div>
         <div class="meta">transport: ${esc(srv.transport)} | cmd: ${esc(srv.command || srv.url || 'n/a')}${srv.package ? ` | package: ${esc(srv.package)}@${esc(srv.package_version || 'unpinned')}` : ''}</div>`;
-      if (srv.unpinned) html += `<div class="env-warn">⚠ unpinned: runs whatever version of ${esc(srv.package)} was published last</div>`;
+      if (srv.unpinned && srv.active !== false) html += `<div class="env-warn">⚠ unpinned: runs whatever version of ${esc(srv.package)} was published last</div>`;
       if (srv.env_keys?.length > 0) html += `<div class="env-warn">⚠ env: ${srv.env_keys.map(esc).join(', ')}</div>`;
       html += `</div>`;
     }
     html += `</div></div>`;
+  }
+  // Catalog entries (connector/plugin caches): one collapsed card per tool.
+  const mcpCatalogs = new Map();
+  for (const cfg of allMcp.filter(c => c.state === 'available')) {
+    const key = `${cfg.app || cfg.config_name}\u0000${cfg.user || ''}`;
+    if (!mcpCatalogs.has(key)) mcpCatalogs.set(key, { app: cfg.app || cfg.config_name, user: cfg.user, rows: [] });
+    for (const srv of (cfg.servers || [])) mcpCatalogs.get(key).rows.push({ srv, dir: cfg.relative_dir || '' });
+  }
+  for (const { app, user, rows } of mcpCatalogs.values()) {
+    html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+      <h3>${esc(app)} <span style="font-size:.7rem;color:var(--text-dim);font-weight:400">— catalog: available, not configured</span>${user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${rows.length} available</span>
+    </div><div class="card-body collapsed"><table><thead><tr><th>Server</th><th>Would run</th><th>Catalog folder</th></tr></thead><tbody>`;
+    for (const { srv, dir } of rows) {
+      html += `<tr><td>${esc(srv.name)}</td><td style="font-size:.72rem">${srv.package ? `${esc(srv.package)}@${esc(srv.package_version || 'unpinned')}` : esc(srv.command || srv.url || '')}</td><td style="font-size:.7rem;color:var(--text-dim)">${esc(dir)}</td></tr>`;
+    }
+    html += `</tbody></table></div></div>`;
   }
   html += `</div>`;
 

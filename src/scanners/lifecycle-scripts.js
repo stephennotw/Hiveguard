@@ -106,7 +106,7 @@ const SCRIPT_FILE_REF = /\b(?:node|bun|deno|sh|bash)\s+(?:-{1,2}[\w-]+(?:=\S+)?\
 function scan(platform, opts = {}, npmProjects) {
   const projects = npmProjects || [];
   const findings = [];
-  const stats = { packagesScanned: 0, linksResolved: 0, packageJsonReads: 0, hiddenLockfiles: 0, seen: new Set() };
+  const stats = { packagesScanned: 0, linksResolved: 0, packageJsonReads: 0, hiddenLockfiles: 0, viaHidden: 0, viaWalk: 0, pnpmStores: 0, seen: new Set() };
   timing.reset();
 
   for (const proj of projects) {
@@ -140,6 +140,9 @@ function scan(platform, opts = {}, npmProjects) {
     links_resolved: stats.linksResolved,
     package_json_reads: stats.packageJsonReads,
     hidden_lockfiles_used: stats.hiddenLockfiles,
+    packages_via_hidden_lockfile: stats.viaHidden,
+    packages_via_walk: stats.viaWalk,
+    pnpm_stores_walked: stats.pnpmStores,
     // Where the time went, for diagnosing slow endpoints (milliseconds).
     timing_ms: timing.snapshot(),
     total_findings: findings.length,
@@ -194,6 +197,7 @@ function scanFromHiddenLockfile(packages, baseDir, ctx) {
     if (ctx.stats.seen.has(pkgPath)) continue;
     ctx.stats.seen.add(pkgPath);
     ctx.stats.packagesScanned++;
+    ctx.stats.viaHidden++;
     if (!info.hasInstallScript) continue;
     const name = info.name || rel.split('node_modules/').pop();
     const pkgJson = readPackageJson(pkgPath, ctx);
@@ -222,6 +226,7 @@ function scanNodeModules(nmDir, ctx, depth, realNm) {
     const entryReal = path.join(realNm, entry.name);
 
     if (entry.name === '.pnpm') {
+      ctx.stats.pnpmStores++;
       for (const store of readDirEntries(entryPath)) {
         const r = resolveDir(path.join(entryPath, store.name), store, ctx, path.join(entryReal, store.name));
         if (r) scanNodeModules(path.join(r.path, 'node_modules'), ctx, depth + 1, path.join(r.real, 'node_modules'));
@@ -250,6 +255,7 @@ function scanPackageDir(pkgPath, dirent, pkgName, ctx, depth, realGuess) {
   ctx.stats.seen.add(r.real);
 
   ctx.stats.packagesScanned++;
+  ctx.stats.viaWalk++;
   const pkgJson = readPackageJson(pkgPath, ctx);
   if (pkgJson && pkgJson.scripts) {
     ctx.findings.push(...checkScripts(pkgJson.scripts, pkgJson.name || pkgName, ctx.project, pkgPath));
