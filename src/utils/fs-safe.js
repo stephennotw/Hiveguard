@@ -112,17 +112,35 @@ const BUILTIN_SKIP = new Set([
 ]);
 
 /**
+ * Directories never entered when collecting project directories (onDir). Repos can
+ * live in Downloads, OneDrive, Dropbox etc., so those stay walkable for discovery;
+ * these are build output, VCS internals and package caches that never hold one.
+ */
+const DISCOVERY_SKIP = new Set([
+  'node_modules', '.git', '.svn', '.hg', '__pycache__',
+  'dist', 'build', 'target', '.next', '.output', 'vendor',
+  '.cache', '.local',
+  '.npm', '.yarn', '.pnpm-store', '.m2', '.ivy2', '.sbt', '.gradle', '.nuget',
+  '.cargo', '.rustup', '.conda', '.virtualenvs', '.pyenv', '.rbenv', '.nvm', '.sdkman', '.jabba',
+  '.tox', '.nox', '.eggs', '__pypackages__', '.pytest_cache', '.terraform',
+]);
+
+/**
  * Walk directories up to maxDepth, yielding files matching a filter.
  * Respects symlink safety and skips unreadable dirs.
  * Uses a built-in skip set plus caller-supplied extras for O(1) lookups.
- * opts.onDir(dirPath, dirents) is called for every directory visited.
+ *
+ * opts.onDir(dirPath, dirents) is called for every directory visited. When it is
+ * set, directories in the built-in skip set are still entered for onDir (unless in
+ * DISCOVERY_SKIP), but no files are matched inside them, so file results are
+ * unchanged by passing onDir.
  */
 function walkSync(dir, opts = {}) {
   const { maxDepth = 10, filter = null, skipDirs = [], onDir = null } = opts;
   const results = [];
   const extraSkip = skipDirs.length > 0 ? new Set(skipDirs) : null;
 
-  function walk(currentDir, depth) {
+  function walk(currentDir, depth, filesSuppressed) {
     if (depth > maxDepth) return;
     let entries;
     try {
@@ -137,11 +155,14 @@ function walkSync(dir, opts = {}) {
 
       if (entry.isDirectory()) {
         const lower = entry.name.toLowerCase();
-        if (BUILTIN_SKIP.has(lower)) continue;
-        if (lower.startsWith('onedrive')) continue;
         if (extraSkip && extraSkip.has(lower)) continue;
-        walk(path.join(currentDir, entry.name), depth + 1);
-      } else if (entry.isFile()) {
+        const skipped = BUILTIN_SKIP.has(lower) || lower.startsWith('onedrive');
+        if (!skipped) {
+          walk(path.join(currentDir, entry.name), depth + 1, filesSuppressed);
+        } else if (onDir && !DISCOVERY_SKIP.has(lower)) {
+          walk(path.join(currentDir, entry.name), depth + 1, true);
+        }
+      } else if (entry.isFile() && !filesSuppressed) {
         if (!filter || filter(entry.name, path.join(currentDir, entry.name))) {
           results.push(path.join(currentDir, entry.name));
         }
@@ -149,7 +170,7 @@ function walkSync(dir, opts = {}) {
     }
   }
 
-  walk(dir, 0);
+  walk(dir, 0, false);
   return results;
 }
 

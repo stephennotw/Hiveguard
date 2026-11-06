@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { readFileSafe, readdirSafe, statSafe, findProjectDirs } = require('../utils/fs-safe');
 const logger = require('../utils/logger');
-const { stripHidden, sanitizeExcerpt } = require('../utils/text');
+const { scanHidden, sanitizeExcerpt } = require('../utils/text');
 
 const SCANNER_ID = 'ai-instructions';
 const MAX_FILE_BYTES = 64 * 1024;
@@ -81,10 +81,10 @@ function scan(platform, opts = {}, projectDirs) {
 
   const ctx = { findings, inventory, seen };
   for (const { dir } of dirs) {
-    for (const spec of PROJECT_FILES) inspectSpec(spec, dir, dir, ctx);
+    for (const spec of PROJECT_FILES) inspectSpec(spec, dir, dir, ctx, 'project');
   }
   for (const home of (platform.userHomes || [])) {
-    for (const spec of USER_FILES) inspectSpec(spec, home, home, ctx);
+    for (const spec of USER_FILES) inspectSpec(spec, home, home, ctx, 'user');
   }
 
   const suspiciousCount = findings.filter(f => f.severity !== 'info').length;
@@ -105,7 +105,8 @@ function scan(platform, opts = {}, projectDirs) {
   };
 }
 
-function inspectSpec(spec, baseDir, trustedRoot, ctx) {
+// scope: 'project' (files that arrive with a repository) or 'user' (the user's own config).
+function inspectSpec(spec, baseDir, trustedRoot, ctx, scope) {
   const fullPath = path.join(baseDir, spec.file);
   const st = statSafe(fullPath);
   if (!st) return;
@@ -113,13 +114,13 @@ function inspectSpec(spec, baseDir, trustedRoot, ctx) {
   if (spec.dir) {
     if (!st.isDirectory()) return;
     const files = readdirSafe(fullPath).filter(f => spec.exts.some(e => f.endsWith(e))).slice(0, MAX_DIR_FILES);
-    for (const f of files) inspectFile({ ...spec, dir: false }, path.join(fullPath, f), baseDir, trustedRoot, ctx);
+    for (const f of files) inspectFile({ ...spec, dir: false }, path.join(fullPath, f), baseDir, trustedRoot, ctx, scope);
     return;
   }
-  if (st.isFile()) inspectFile(spec, fullPath, baseDir, trustedRoot, ctx);
+  if (st.isFile()) inspectFile(spec, fullPath, baseDir, trustedRoot, ctx, scope);
 }
 
-function inspectFile(spec, filePath, project, trustedRoot, ctx) {
+function inspectFile(spec, filePath, project, trustedRoot, ctx, scope) {
   let real;
   try { real = fs.realpathSync.native(filePath); } catch { return; }
   if (ctx.seen.has(real)) return;
@@ -144,15 +145,20 @@ function inspectFile(spec, filePath, project, trustedRoot, ctx) {
   if (content == null) return;
 
   const extra = [];
-  if (spec.kind === 'claude-settings') extra.push(...inspectClaudeSettings(content, item));
+  if (spec.kind === 'claude-settings') extra.push(...inspectClaudeSettings(content, item, scope));
   if (spec.kind === 'vscode-tasks') {
     const tasks = autorunTasks(content);
-    if (tasks.length === 0) {
-      ctx.inventory.pop(); // tasks.json without auto-run tasks is not an AI/agent surface
-      return;
+    if (tasks && tasks.length > 0) {
+      item.autorun_tasks = tasks;
+      extra.push({ label: 'autorun-on-folder-open', severity: 'medium' });
+    } else {
+      // Ordinary tasks.json is not an agent surface; unparseable ones are still pattern-checked.
+      ctx.inventory.pop();
+      if (tasks) return;
+      const hits = checkText(content);
+      if (hits.length === 0) return;
+      ctx.inventory.push(item);
     }
-    item.autorun_tasks = tasks;
-    extra.push({ label: 'autorun-on-folder-open', severity: 'medium' });
   }
 
   const hits = [...extra, ...checkText(content)];
@@ -164,18 +170,24 @@ function inspectFile(spec, filePath, project, trustedRoot, ctx) {
 }
 
 function checkText(content) {
-  const { cleaned, hidden } = stripHidden(content);
-  const hits = hidden > 0 ? [{ label: 'hidden-unicode', severity: 'high' }] : [];
+  const { cleaned, suspicious, strong } = scanHidden(content);
+  // A stray zero-width space or two often comes from copy-paste; bidi overrides,
+  // tag characters, or several unexplained characters look deliberate.
+  const hits = suspicious === 0 ? [] : [{ label: 'hidden-unicode', severity: strong > 0 || suspicious >= 3 ? 'high' : 'medium' }];
   for (const { pattern, label, severity } of SUSPICIOUS_PATTERNS) {
     if (pattern.test(cleaned)) hits.push({ label, severity });
   }
   return hits;
 }
 
-// Records hook commands for visibility; flags settings that disable permission prompts.
-function inspectClaudeSettings(content, item) {
+/**
+ * Records hook commands for visibility. Flags settings that disable permission prompts,
+ * and hooks defined in a repository's own settings: those come from cloned code and run
+ * automatically in the user's agent (the ChainDrop/Miasma persistence pattern).
+ */
+function inspectClaudeSettings(content, item, scope) {
   let data;
-  try { data = JSON.parse(content); } catch { return []; }
+  try { data = JSON.parse(stripBom(content)); } catch { return []; }
   const hooks = [];
   for (const [event, groups] of Object.entries((data && data.hooks) || {})) {
     for (const g of (Array.isArray(groups) ? groups : [])) {
@@ -184,15 +196,21 @@ function inspectClaudeSettings(content, item) {
       }
     }
   }
-  if (hooks.length > 0) item.hooks = hooks;
+  const hits = [];
+  if (hooks.length > 0) {
+    item.hooks = hooks;
+    if (scope === 'project') hits.push({ label: 'project-agent-hooks', severity: 'medium' });
+  }
   const mode = data && data.permissions && data.permissions.defaultMode;
-  return mode === 'bypassPermissions' ? [{ label: 'permission-bypass-mode', severity: 'medium' }] : [];
+  if (mode === 'bypassPermissions') hits.push({ label: 'permission-bypass-mode', severity: 'medium' });
+  return hits;
 }
 
 // VS Code tasks with runOptions.runOn === "folderOpen" run when the folder is opened.
+// Returns null when the file cannot be parsed.
 function autorunTasks(content) {
   let data;
-  try { data = JSON.parse(stripJsonc(content)); } catch { return []; }
+  try { data = JSON.parse(stripJsonc(content)); } catch { return null; }
   const tasks = (data && Array.isArray(data.tasks)) ? data.tasks : [];
   return tasks
     .filter(t => t && t.runOptions && t.runOptions.runOn === 'folderOpen')
@@ -200,7 +218,8 @@ function autorunTasks(content) {
 }
 
 // Strips // and /* */ comments (outside strings) and trailing commas from JSONC.
-function stripJsonc(src) {
+function stripJsonc(text) {
+  const src = stripBom(text);
   let out = '';
   let inStr = false;
   for (let i = 0; i < src.length; i++) {
@@ -217,6 +236,10 @@ function stripJsonc(src) {
     out += c;
   }
   return out.replace(/,(\s*[}\]])/g, '$1');
+}
+
+function stripBom(text) {
+  return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
 }
 
 function makeFinding(tool, filePath, project, hits, text) {
