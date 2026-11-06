@@ -78,8 +78,9 @@ function scan(platform, opts = {}, projectDirs) {
   const findings = [];
   const inventory = [];
   const seen = new Set();
+  const reportedLinks = new Set();
 
-  const ctx = { findings, inventory, seen };
+  const ctx = { findings, inventory, seen, reportedLinks };
   for (const { dir } of dirs) {
     for (const spec of PROJECT_FILES) inspectSpec(spec, dir, dir, ctx, 'project');
   }
@@ -133,6 +134,12 @@ function inspectFile(spec, filePath, project, trustedRoot, ctx, scope) {
   let realRoot = trustedRoot;
   try { realRoot = fs.realpathSync.native(trustedRoot); } catch { /* keep as is */ }
   if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
+    // The link itself is deduplicated (CLAUDE.md and claude.md are one link on
+    // case-insensitive filesystems); its target is not marked as seen.
+    const link = fs.lstatSync(filePath, { throwIfNoEntry: false });
+    const linkId = link && link.ino ? `${link.dev}:${link.ino}` : filePath;
+    if (ctx.reportedLinks.has(linkId)) return;
+    ctx.reportedLinks.add(linkId);
     item.symlink_target = real;
     ctx.inventory.push(item);
     ctx.findings.push(makeFinding(spec.tool, filePath, project, [{ label: 'symlink-outside-project', severity: 'medium' }],

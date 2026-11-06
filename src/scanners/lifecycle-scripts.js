@@ -171,6 +171,11 @@ function resolveDir(p, dirent, ctx) {
   return st && st.isDirectory() ? p : null;
 }
 
+// Script paths are reported as npm scripts write them, identically on every OS.
+function toPosix(p) {
+  return p.split(path.sep).join('/');
+}
+
 function realpathOr(p) {
   try { return fs.realpathSync(p); } catch { return path.resolve(p); }
 }
@@ -232,7 +237,7 @@ function resolveRequire(spec, pkgDir) {
   if (base !== root && !base.startsWith(root + path.sep)) return [];
   const candidates = [base, ...['.js', '.cjs', '.mjs'].map(e => base + e), ...['index.js', 'index.cjs'].map(i => path.join(base, i))];
   const found = candidates.find(c => { const st = statSafe(c); return st && st.isFile(); });
-  return found ? [{ abs: found, rel: path.relative(root, found) }] : [];
+  return found ? [{ abs: found, rel: toPosix(path.relative(root, found)) }] : [];
 }
 
 // Files referenced as `node x.js`, `sh ./install.sh`, ... resolved inside pkgDir only.
@@ -243,7 +248,7 @@ function referencedScriptFiles(script, pkgDir) {
   for (const m of script.matchAll(SCRIPT_FILE_REF)) {
     const abs = path.resolve(root, m[1]);
     if (abs !== root && !abs.startsWith(root + path.sep)) continue;
-    if (!refs.some(r => r.abs === abs)) refs.push({ abs, rel: path.relative(root, abs) });
+    if (!refs.some(r => r.abs === abs)) refs.push({ abs, rel: toPosix(path.relative(root, abs)) });
   }
   return refs;
 }
