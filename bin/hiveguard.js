@@ -506,6 +506,11 @@ async function main() {
     }
   }
 
+  // Editor extensions hiding code in invisible Unicode (GlassWorm)
+  for (const f of (scanResults.editor_extensions.findings || [])) {
+    allFindings.push({ user: resolveUser(f.path, userHomes), ...f });
+  }
+
   // Autostart entries and catalog persistence files
   for (const f of (scanResults.persistence.findings || [])) {
     allFindings.push({ user: resolveUser(f.path, userHomes), package: f.name || path.basename(f.path), version: '', ...f });

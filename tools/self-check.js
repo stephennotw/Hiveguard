@@ -109,6 +109,8 @@ for (const c of mcpCfgs.filter(x => x.state !== 'available')) {
 for (const [app, e] of [...byApp.entries()].sort((a, b) => b[1].servers - a[1].servers)) {
   add(`    ${String(e.servers).padStart(4)} x ${app} (${e.configs} config file(s): ${[...e.files].join(', ')}; ${e.names.size} distinct server names)`);
 }
+const ee = ecos.editor_extensions || {};
+add(`  extension entry files checked: ${ee.entry_files_checked || 0} (${ee.entry_files_skipped || 0} over size budget) in ${ee.entry_check_ms || 0} ms`);
 const editorsFound = (ecos.editor_extensions && ecos.editor_extensions.discovered_editors) || [];
 if (editorsFound.length) for (const [k, v] of count(allServers.filter(s => s.state === 'available'), s => `${s.app} under ${s.dir || '(top)'}/`)) add(`    available (catalog): ${String(v).padStart(3)} x ${k}`);
 add(`  editors found by structure: ${editorsFound.join(', ')}`);
@@ -145,6 +147,7 @@ const describe = (f) => {
     case 'suspicious_ai_instruction': return `AI file ${f.tool}: ${path.basename(f.path || '')}`;
     case 'supply_chain_compromise': return `threat-intel match (${f.ecosystem})`;
     case 'suspicious_autostart': return `autostart entry (${f.autostart_kind})`;
+    case 'suspicious_extension': return 'editor extension with invisible-Unicode payload';
     case 'known_ioc_file': return 'catalog persistence file present';
     case 'remote_url_dependency': return `npm dependency from URL${f.dependency === 'resolved' ? ' (installed)' : ''}`;
     case 'known_cve': return `known CVE (${f.ecosystem}) ${f.cve || ''}`.trim();

@@ -133,3 +133,30 @@ test('URL dependencies: registry tarballs and git hosts pass, other URLs are fla
   assert.deepStrictEqual(remoteTarball('http://packages.storeartifact.com/npm/unused-imports'), { host: 'packages.storeartifact.com', plaintext: true, ip: false });
   assert.deepStrictEqual(remoteTarball('https://203.0.113.5/p.tgz'), { host: '203.0.113.5', plaintext: false, ip: true });
 });
+
+test('extensions: long invisible-Unicode runs are found, emoji selectors are not', () => {
+  const { invisibleRuns, scan: scanExt } = require('../src/scanners/editor-extensions');
+  const vs = (n) => String.fromCodePoint(...Array.from({ length: n }, (_, i) => 0xE0100 + (i % 200)));
+  assert.strictEqual(invisibleRuns(Buffer.from('const heart = "❤️"; // ok ☺️')).longest, 1);
+  assert.strictEqual(invisibleRuns(Buffer.from(`eval(decode("${vs(300)}"))`)).longest, 300);
+  assert.strictEqual(invisibleRuns(Buffer.from('︀︁︂')).longest, 3);
+
+  const dir = tmp();
+  try {
+    const mk = (id, main, body, extra = {}) => {
+      fs.mkdirSync(path.join(dir, id), { recursive: true });
+      fs.writeFileSync(path.join(dir, id, 'package.json'), JSON.stringify({ name: id.split('.')[1].replace(/-.*$/, ''), publisher: id.split('.')[0], version: '1.0.0', main, ...extra }));
+      const entry = path.join(dir, id, main.replace(/^\.\//, '') + (main.endsWith('.js') ? '' : '.js'));
+      fs.mkdirSync(path.dirname(entry), { recursive: true });
+      fs.writeFileSync(entry, body);
+    };
+    mk('good.theme-1.0.0', './out/extension', 'module.exports = {}; // ❤️', { extensionPack: ['a.b', 'c.d'] });
+    mk('evil.tool-1.0.0', 'extension.js', `const s = "${vs(250)}";`);
+    const r = scanExt({ editorExtensionDirs: { vscode: [dir] } });
+    assert.deepStrictEqual(r.findings.map(f => [f.package, f.severity]), [['evil.tool', 'critical']]);
+    assert.deepStrictEqual(r.editors.vscode.find(e => e.publisher === 'good').extension_pack, ['a.b', 'c.d']);
+    assert.strictEqual(r.entry_files_checked, 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

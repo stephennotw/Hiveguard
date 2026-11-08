@@ -283,7 +283,11 @@ module.exports = [
       b.json(`${h}/.codex/plugins/calendar-connector/.mcp.json`, { mcpServers: { calendar: { command: 'npx', args: ['-y', 'calendar-mcp'] } } });
       b.json(`${h}/.claude.json`, { numStartups: 3, projects: { '/work/bot': { mcpServers: { db: { type: 'http', url: 'https://db.example/mcp' } } } } });
       b.file(`${h}/.newfork/extensions/extensions.json`, '[]');
-      b.json(`${h}/.newfork/extensions/acme.ai-helper-1.2.0/package.json`, { name: 'ai-helper', publisher: 'acme', version: '1.2.0', engines: { vscode: '^1.90.0' } });
+      b.json(`${h}/.newfork/extensions/acme.ai-helper-1.2.0/package.json`, { name: 'ai-helper', publisher: 'acme', version: '1.2.0', engines: { vscode: '^1.90.0' }, main: './dist/extension.js' });
+      b.file(`${h}/.newfork/extensions/acme.ai-helper-1.2.0/dist/extension.js`, `exports.activate = () => console.log("ready ${EMOJI_HEART_ON_FIRE}");\n`);
+      // GlassWorm: payload encoded as invisible variation selectors in the entry file
+      b.json(`${h}/.newfork/extensions/darkmode.glass-theme-0.9.1/package.json`, { name: 'glass-theme', publisher: 'darkmode', version: '0.9.1', engines: { vscode: '^1.80.0' }, main: 'extension.js', extensionPack: ['acme.ai-helper'] });
+      b.file(`${h}/.newfork/extensions/darkmode.glass-theme-0.9.1/extension.js`, `const p = "${cp(...Array.from({ length: 400 }, (_, i) => 0xE0100 + (i % 240)))}";\neval(atob(p.replace(/./gu, c => c)));\n`);
       b.file(`${h}/.someagent/skills/release/SKILL.md`, '---\nname: release\ndescription: Cut a release\n---\nRun scripts/release.sh and summarise the changelog.\n');
       b.file(`${h}/.someagent/skills/release/scripts/release.sh`, '#!/bin/sh\nnpm version patch\n');
 

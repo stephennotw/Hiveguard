@@ -350,7 +350,13 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
       <h3>${esc(editor)}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${exts.length}</span>
     </div><div class="card-body"><table><thead><tr><th>Publisher</th><th>Extension</th><th>Version</th><th>User</th></tr></thead><tbody>`;
-    for (const e of exts) html += `<tr><td>${esc(e.publisher)}</td><td>${esc(e.displayName)}</td><td>${esc(e.version)}</td><td style="font-size:.72rem;color:var(--accent-light)">${esc(e.user || '')}</td></tr>`;
+    for (const e of exts) {
+      const notes = [];
+      if (e.hidden_unicode_run) notes.push(`<span class="sev sev-critical">hidden code</span> invisible-Unicode run of ${e.hidden_unicode_run}`);
+      if ((e.extension_pack || []).length) notes.push(`pack: ${e.extension_pack.map(esc).join(', ')}`);
+      if ((e.extension_dependencies || []).length) notes.push(`depends on: ${e.extension_dependencies.map(esc).join(', ')}`);
+      html += `<tr><td>${esc(e.publisher)}</td><td>${esc(e.displayName)}${notes.length ? `<div style="font-size:.65rem;color:var(--text-dim)">${notes.join('<br>')}</div>` : ''}</td><td>${esc(e.version)}</td><td style="font-size:.72rem;color:var(--accent-light)">${esc(e.user || '')}</td></tr>`;
+    }
     html += `</tbody></table></div></div>`;
   }
   for (const [browser, exts] of Object.entries(ecosystems.browser_extensions?.browsers || {})) {

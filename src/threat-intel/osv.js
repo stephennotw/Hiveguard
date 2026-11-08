@@ -19,7 +19,10 @@ const ECOSYSTEM_MAP = {
   composer: 'Packagist',
   nuget: 'NuGet',
   maven: 'Maven',
+  // VS Code-family extensions (Marketplace / Open VSX ids, "<publisher>.<name>", lowercase on OSV)
+  'editor-extension': 'VSCode',
 };
+const LOWERCASE_NAMES = new Set(['VSCode']);
 
 /**
  * Check packages against OpenSSF malicious-package advisories (MAL-*) on OSV.dev.
@@ -42,8 +45,9 @@ async function queryOsv(packages, opts = {}) {
     const pkg = packages[i];
     const eco = ECOSYSTEM_MAP[(pkg.ecosystem || '').toLowerCase()];
     if (!eco || !pkg.name || !isConcreteVersion(pkg.version)) continue;
-    const key = `${eco}\0${pkg.name}\0${pkg.version}`;
-    if (!unique.has(key)) unique.set(key, { query: { package: { name: pkg.name, ecosystem: eco }, version: pkg.version }, indices: [], malIds: new Set() });
+    const name = LOWERCASE_NAMES.has(eco) ? pkg.name.toLowerCase() : pkg.name;
+    const key = `${eco}\0${name}\0${pkg.version}`;
+    if (!unique.has(key)) unique.set(key, { query: { package: { name, ecosystem: eco }, version: pkg.version }, indices: [], malIds: new Set() });
     unique.get(key).indices.push(i);
   }
   if (unique.size === 0) return result;

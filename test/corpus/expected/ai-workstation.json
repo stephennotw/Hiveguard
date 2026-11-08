@@ -6,7 +6,7 @@
   ],
   "exit_code": 2,
   "counts": {
-    "components": 8,
+    "components": 9,
     "git_repos": 0,
     "lifecycle_packages": 0
   },
@@ -15,6 +15,7 @@
   ],
   "findings": [
     "critical supply_chain_compromise npm:node-ipc@9.2.3 (node-ipc-credential-stealer.json)",
+    "critical suspicious_extension ari/.newfork/extensions/darkmode.glass-theme-0.9.1/extension.js [invisible-unicode-payload]",
     "medium mcp_server_risk ari/.brandnew-agent/mcp.json [mcp-unpinned-package]"
   ],
   "git_hooks": [],

@@ -214,7 +214,7 @@ Note: Threat intel catalogs are loaded into memory at runtime — no disk cache 
 | **Composer** | PHP dependencies | `composer.lock` |
 | **RubyGems** | Ruby dependencies | `Gemfile.lock` |
 | **Cargo** | Rust dependencies | `Cargo.lock` |
-| **Editor Extensions** | VS Code, Windsurf, Cursor, VSCodium | Extension `package.json` |
+| **Editor Extensions** | VS Code, Windsurf, Cursor, VSCodium and other forks; extension packs and dependencies; GlassWorm-style code hidden as invisible Unicode in the entry file; online, checked against OSV.dev's `VSCode` malicious-package advisories | Extension `package.json` and its `main` file (up to 8 MB each, 256 MB per scan) |
 | **Browser Extensions** | Chrome, Edge, Brave | Extension `manifest.json` |
 | **MCP Configs** | Claude, Cursor, Windsurf MCP servers | Config JSON files |
 | **Secrets Hygiene** | `.env` files, git creds, SSH keys | File detection + metadata |

@@ -43,6 +43,18 @@ describe('osv module', () => {
     }
   });
 
+  it('queries editor extensions in the VSCode ecosystem with lowercase ids', async () => {
+    const { fn, calls } = fakeOsv({
+      malByPkg: { 'nrwl.angular-console@18.95.0': ['MAL-2026-5161'] },
+      records: { 'MAL-2026-5161': { id: 'MAL-2026-5161', summary: 'Malicious code in nrwl.angular-console (VSCode)' } },
+    });
+    http.request = fn;
+    const r = await queryOsv([{ ecosystem: 'editor-extension', name: 'Nrwl.Angular-Console', version: '18.95.0', project: 'vscode' }]);
+    assert.deepEqual(calls.batch[0].map(q => q.package), [{ name: 'nrwl.angular-console', ecosystem: 'VSCode' }]);
+    assert.equal(r.matches.length, 1);
+    assert.equal(r.matches[0].name, 'Nrwl.Angular-Console');
+  });
+
   it('skips unknown ecosystems and non-concrete versions without calling the API', async () => {
     const fake = fakeOsv();
     http.request = fake.fn;
