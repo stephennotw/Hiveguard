@@ -112,7 +112,7 @@ const lockfile = (name, pkgs) => ({
 module.exports = [
   {
     name: 'typical-dev',
-    description: 'Ordinary developer laptop: popular packages with real-world install scripts, husky, pnpm workspace, emoji and Hebrew in CLAUDE.md, user-level Claude hooks. Nothing here should be flagged above medium.',
+    description: 'Ordinary developer laptop: popular packages with real-world install scripts, husky, a pnpm workspace with its lockfile, emoji and Hebrew in CLAUDE.md, user-level Claude hooks, ordinary Linux autostart entries. Nothing here should be flagged above medium.',
     knownGaps: [],
     build(b) {
       const app = 'dana/projects/webapp';
@@ -206,7 +206,7 @@ module.exports = [
 
   {
     name: 'npm-worm',
-    description: 'Project with packages from bundled threat-intel catalogs (Mini Shai-Hulud, node-ipc) and a worm payload in a preinstall hook; also a Phantom Gyp-style binding.gyp, which is not yet detected.',
+    description: 'Projects with packages from bundled threat-intel catalogs (Mini Shai-Hulud, node-ipc, AntV via a Yarn Berry lockfile), a worm payload in a preinstall hook carrying a catalog exfil host, a Phantom Gyp-style binding.gyp, a PhantomRaven URL dependency, and a Startup-folder script that downloads a second stage.',
     knownGaps: [],
     build(b) {
       const api = 'lee/projects/api';
@@ -235,7 +235,7 @@ module.exports = [
 
   {
     name: 'power-user',
-    description: 'macOS-style profile: repo under ~/Library, global core.hooksPath with a staged payload, a hook symlinked to dotfiles, user-level agent config disabling permission prompts, a jailbreak in ~/.codex/AGENTS.md, and a project rules file symlinked outside the project.',
+    description: 'macOS-style profile: repo under ~/Library, global core.hooksPath with a staged payload, a hook symlinked to dotfiles, user-level agent config disabling permission prompts, a jailbreak in ~/.codex/AGENTS.md, a project rules file symlinked outside the project, and the Nx Console LaunchAgent / Python backdoor persistence next to a normal Homebrew LaunchAgent.',
     knownGaps: [],
     posixOnly: [
       'kim/Library/Developer/side-project/.git/hooks/pre-push',
@@ -268,7 +268,7 @@ module.exports = [
 
   {
     name: 'ai-workstation',
-    description: 'Developer laptop full of AI tooling, found by structure: an unknown agent with MCP servers (one unpinned, one pinned to a known-malicious package), Codex TOML and ~/.claude.json project servers, an unknown VS Code fork, a custom agent skill, local GGUF / Hugging Face / Ollama models, provider keys in a shell profile and .env, and AI SDK dependencies.',
+    description: 'Developer laptop full of AI tooling, found by structure: an unknown agent with MCP servers (one unpinned, one pinned to a known-malicious package), Codex TOML and ~/.claude.json project servers, an unknown VS Code fork, a custom agent skill, local GGUF / Hugging Face / Ollama models, provider keys in a shell profile and .env, AI SDK dependencies (npm and a uv-locked Python project), a GlassWorm-style extension and a legacy bun.lockb.',
     knownGaps: [
       'Pickle-format models are inventoried and marked, but their contents are not inspected for dangerous imports.',
     ],

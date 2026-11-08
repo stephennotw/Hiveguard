@@ -1,6 +1,6 @@
 {
   "machine": "ai-workstation",
-  "description": "Developer laptop full of AI tooling, found by structure: an unknown agent with MCP servers (one unpinned, one pinned to a known-malicious package), Codex TOML and ~/.claude.json project servers, an unknown VS Code fork, a custom agent skill, local GGUF / Hugging Face / Ollama models, provider keys in a shell profile and .env, and AI SDK dependencies.",
+  "description": "Developer laptop full of AI tooling, found by structure: an unknown agent with MCP servers (one unpinned, one pinned to a known-malicious package), Codex TOML and ~/.claude.json project servers, an unknown VS Code fork, a custom agent skill, local GGUF / Hugging Face / Ollama models, provider keys in a shell profile and .env, AI SDK dependencies (npm and a uv-locked Python project), a GlassWorm-style extension and a legacy bun.lockb.",
   "known_gaps": [
     "Pickle-format models are inventoried and marked, but their contents are not inspected for dangerous imports."
   ],

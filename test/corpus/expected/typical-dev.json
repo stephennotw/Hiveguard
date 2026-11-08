@@ -1,6 +1,6 @@
 {
   "machine": "typical-dev",
-  "description": "Ordinary developer laptop: popular packages with real-world install scripts, husky, pnpm workspace, emoji and Hebrew in CLAUDE.md, user-level Claude hooks. Nothing here should be flagged above medium.",
+  "description": "Ordinary developer laptop: popular packages with real-world install scripts, husky, a pnpm workspace with its lockfile, emoji and Hebrew in CLAUDE.md, user-level Claude hooks, ordinary Linux autostart entries. Nothing here should be flagged above medium.",
   "known_gaps": [],
   "exit_code": 0,
   "counts": {

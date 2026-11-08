@@ -1,6 +1,6 @@
 {
   "machine": "power-user",
-  "description": "macOS-style profile: repo under ~/Library, global core.hooksPath with a staged payload, a hook symlinked to dotfiles, user-level agent config disabling permission prompts, a jailbreak in ~/.codex/AGENTS.md, and a project rules file symlinked outside the project.",
+  "description": "macOS-style profile: repo under ~/Library, global core.hooksPath with a staged payload, a hook symlinked to dotfiles, user-level agent config disabling permission prompts, a jailbreak in ~/.codex/AGENTS.md, a project rules file symlinked outside the project, and the Nx Console LaunchAgent / Python backdoor persistence next to a normal Homebrew LaunchAgent.",
   "known_gaps": [],
   "exit_code": 1,
   "counts": {

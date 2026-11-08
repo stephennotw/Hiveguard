@@ -162,7 +162,7 @@ function showHelp() {
   Options:
     --output <dir>       Output directory (default: ./hiveguard-results)
     --json               Output JSON to stdout (quiet mode)
-    --offline            Use bundled baseline catalogs only (no GitHub sync)
+    --offline            No network: bundled and custom threat intel only
     --scan-dirs <dirs>   Comma-separated scan directories
     --users-root <dir>   Scan user profiles under <dir> only (e.g. a mounted disk image)
     --normal-priority    Run at normal CPU priority (default: below normal)
@@ -172,15 +172,18 @@ function showHelp() {
     --max-depth <n>      Max directory depth (default: 4)
     --format <list>      Also write sarif, cyclonedx (SBOM), ndjson (SIEM events), or all
     --ioc <values>       Look for indicators: name@version, eco:name, sha256, file name,
-                         path (~/..., /..., C:\...), domain or text; comma-separated, repeatable
+                         path (~/..., /..., C:\\...), domain or text; comma-separated, repeatable
     --ioc-file <file>    Indicators, one per line (# comments allowed)
     --verbose, -v        Debug logging
     --help, -h           Show this message
 
   Exit codes:
     0  Clean
-    1  Findings (CVEs, advisories)
-    2  Critical (supply chain compromise)
+    1  Critical or high findings
+    2  Known-compromised package installed, or an --ioc indicator found
+    3  Could not run
+
+  Documentation: README.md and docs/ (HOW-TO.md, RESULTS-GUIDE.md, DEPLOYMENT.md)
 
   Examples:
     node hiveguard.js

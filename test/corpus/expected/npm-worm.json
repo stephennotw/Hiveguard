@@ -1,6 +1,6 @@
 {
   "machine": "npm-worm",
-  "description": "Project with packages from bundled threat-intel catalogs (Mini Shai-Hulud, node-ipc) and a worm payload in a preinstall hook; also a Phantom Gyp-style binding.gyp, which is not yet detected.",
+  "description": "Projects with packages from bundled threat-intel catalogs (Mini Shai-Hulud, node-ipc, AntV via a Yarn Berry lockfile), a worm payload in a preinstall hook carrying a catalog exfil host, a Phantom Gyp-style binding.gyp, a PhantomRaven URL dependency, and a Startup-folder script that downloads a second stage.",
   "known_gaps": [],
   "exit_code": 2,
   "counts": {

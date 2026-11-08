@@ -1,7 +1,7 @@
 {
   "name": "hiveguard",
-  "version": "1.1.0",
-  "description": "Cross-platform endpoint supply chain scanner with live threat intelligence",
+  "version": "2.0.0",
+  "description": "Read-only endpoint scanner for supply-chain compromise, malicious install scripts, persistence and AI tooling, with live threat intelligence",
   "main": "bin/hiveguard.js",
   "bin": {
     "hiveguard": "./bin/hiveguard.js"
@@ -20,7 +20,12 @@
     "sbom",
     "npm",
     "pypi",
-    "vulnerability"
+    "vulnerability",
+    "ioc",
+    "persistence",
+    "mcp",
+    "cyclonedx",
+    "sarif"
   ],
   "author": "",
   "license": "MIT",
