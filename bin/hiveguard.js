@@ -48,6 +48,9 @@ const lockfilesScanner = require(path.join(SRC_ROOT, 'scanners', 'lockfiles'));
 const persistenceScanner = require(path.join(SRC_ROOT, 'scanners', 'persistence'));
 const { configureIocs } = require(path.join(SRC_ROOT, 'utils', 'script-inspect'));
 const { extractIocs } = require(path.join(SRC_ROOT, 'threat-intel', 'iocs'));
+const { parseIocs, matchPackageIoc } = require(path.join(SRC_ROOT, 'threat-intel', 'cli-iocs'));
+const exportsFmt = require(path.join(SRC_ROOT, 'report', 'exports'));
+const { iocHits } = require(path.join(SRC_ROOT, 'utils', 'script-inspect'));
 const editorExtScanner = require(path.join(SRC_ROOT, 'scanners', 'editor-extensions'));
 const browserExtScanner = require(path.join(SRC_ROOT, 'scanners', 'browser-extensions'));
 const mcpScanner = require(path.join(SRC_ROOT, 'scanners', 'mcp-configs'));
@@ -72,6 +75,8 @@ const { checkKnownVulns } = require(path.join(SRC_ROOT, 'cve', 'known-vulns'));
 // Report
 const { generateReport } = require(path.join(SRC_ROOT, 'report', 'html-report'));
 
+const EXPORT_FORMATS = ['sarif', 'cyclonedx', 'ndjson'];
+
 // ── Parse CLI arguments ──
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -86,6 +91,9 @@ function parseArgs() {
     noReport: false,
     noSecrets: false,
     maxDepth: 4,
+    formats: [],
+    iocs: [],
+    iocFile: null,
     verbose: false,
     help: false,
   };
@@ -122,6 +130,17 @@ function parseArgs() {
       case '--max-depth':
         opts.maxDepth = parseInt(args[++i]) || 4;
         break;
+      case '--format': case '--formats': {
+        const list = (args[++i] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        opts.formats.push(...(list.includes('all') ? EXPORT_FORMATS : list));
+        break;
+      }
+      case '--ioc':
+        opts.iocs.push(...(args[++i] || '').split(',').map(s => s.trim()).filter(Boolean));
+        break;
+      case '--ioc-file':
+        opts.iocFile = args[++i] || null;
+        break;
       case '--verbose': case '-v':
         opts.verbose = true;
         break;
@@ -151,6 +170,10 @@ function showHelp() {
     --no-report          Skip HTML report generation
     --no-secrets         Skip secrets hygiene scan
     --max-depth <n>      Max directory depth (default: 4)
+    --format <list>      Also write sarif, cyclonedx (SBOM), ndjson (SIEM events), or all
+    --ioc <values>       Look for indicators: name@version, eco:name, sha256, file name,
+                         path (~/..., /..., C:\...), domain or text; comma-separated, repeatable
+    --ioc-file <file>    Indicators, one per line (# comments allowed)
     --verbose, -v        Debug logging
     --help, -h           Show this message
 
@@ -164,6 +187,8 @@ function showHelp() {
     node hiveguard.js --output ./results --verbose
     node hiveguard.js --json --offline > results.json
     node hiveguard.js --scan-dirs /home/user/projects,/opt/apps
+    node hiveguard.js --format sarif,cyclonedx
+    node hiveguard.js --ioc "@antv/a8@0.1.1,~/.local/share/kitty/cat.py,t.m-kosche.com"
   `;
   console.log(help);
 }
@@ -229,7 +254,22 @@ async function main() {
 
   // File-level indicators (payload names, hashes, markers, persistence paths) from the catalogs
   const iocs = extractIocs(catalogs);
-  configureIocs({ filenames: iocs.filenames.map(i => i.value), sha256: iocs.sha256, strings: iocs.strings });
+  let cliIocs = [];
+  try {
+    cliIocs = parseIocs(opts.iocs, opts.iocFile);
+  } catch (e) {
+    process.stderr.write(`  Could not read --ioc-file: ${e.message}\n`);
+    process.exit(3);
+  }
+  const ofKind = (k) => cliIocs.filter(i => i.kind === k).map(i => ({ value: i.value, source: i.source }));
+  // Command-line indicators go last so their source wins when a value is also in a catalog.
+  iocs.filenames.push(...ofKind('filename'));
+  iocs.sha256.push(...ofKind('sha256'));
+  iocs.strings.push(...ofKind('string'));
+  iocs.paths.push(...ofKind('path'));
+  configureIocs({ filenames: iocs.filenames, sha256: iocs.sha256, strings: iocs.strings });
+  const iocNames = new Map(iocs.filenames.map(i => [i.value.toLowerCase(), i.source]));
+  const walkIocFiles = [];
 
   // Step 4: Single-pass directory walk for all lockfile types
   logger.info('core', 'Starting scanners...');
@@ -251,7 +291,16 @@ async function main() {
   const collectModels = aiModelsScanner.modelCandidateCollector(modelCandidates);
   const foundFiles = findMultipleFiles(platform.projectRoots, lockfileNames, {
     ...scanOpts,
-    onDir: (dir, entries, info) => { collectProject(dir, entries, info); collectModels(dir, entries, info); collectEnvFiles(dir, entries, info); },
+    onDir: (dir, entries, info) => {
+      collectProject(dir, entries, info); collectModels(dir, entries, info); collectEnvFiles(dir, entries, info);
+      // Payload file names from catalogs and --ioc, matched on names the walk lists anyway
+      if (iocNames.size > 0) {
+        for (const e of entries) {
+          const src = e.isFile() && iocNames.get(e.name.toLowerCase());
+          if (src && walkIocFiles.length < 1000) walkIocFiles.push({ path: path.join(dir, e.name), source: src });
+        }
+      }
+    },
   });
   logger.info('core', `Directory walk completed in ${Date.now() - t0}ms`);
 
@@ -411,6 +460,7 @@ async function main() {
         severity: 'critical',
         type: 'supply_chain_compromise',
         user: resolveUser(match.source || match.project, userHomes),
+        location: match.source || null,
         ecosystem: match.ecosystem,
         package: match.name,
         version: match.version,
@@ -516,6 +566,40 @@ async function main() {
     allFindings.push({ user: resolveUser(f.path, userHomes), package: f.name || path.basename(f.path), version: '', ...f });
   }
 
+  // Payload file names seen during the directory walk
+  const reportedIocFiles = new Set((scanResults.persistence.findings || []).map(f => f.path));
+  for (const hit of walkIocFiles) {
+    if (reportedIocFiles.has(hit.path)) continue;
+    reportedIocFiles.add(hit.path);
+    allFindings.push({
+      severity: 'critical', type: 'known_ioc_file', user: resolveUser(hit.path, userHomes), ecosystem: 'persistence',
+      package: path.basename(hit.path), version: '', path: hit.path, ioc: hit.source, triggers: ['known-payload-filename'],
+      text: `File with a known payload name is present (${hit.source})`,
+    });
+  }
+
+  // --ioc: packages, plus everything recorded by the file-level checks
+  const iocSearch = cliIocs.map(ioc => {
+    if (ioc.kind === 'invalid') return { ioc: ioc.raw, kind: ioc.kind, found: false, error: ioc.error, locations: [] };
+    let locations = [];
+    if (ioc.kind === 'package') {
+      locations = matchPackageIoc(ioc, flatPackages).map(p => `${p.name}@${p.version} in ${p.source || p.project}`);
+    } else {
+      const fromFiles = iocHits().filter(h => h.source === ioc.source).map(h => h.file);
+      const fromFindings = allFindings.filter(f => f.ioc === ioc.source).map(f => f.path);
+      locations = [...new Set([...fromFiles, ...fromFindings].filter(Boolean))];
+    }
+    if (ioc.kind === 'package') {
+      for (const loc of locations) {
+        allFindings.push({
+          severity: 'critical', type: 'ioc_match', ecosystem: ioc.ecosystem, package: ioc.name, version: ioc.version || '',
+          ioc: ioc.source, location: loc, triggers: ['cli-ioc-package'], text: `Indicator ${ioc.raw} found: ${loc}`,
+        });
+      }
+    }
+    return { ioc: ioc.raw, kind: ioc.kind, value: ioc.value, found: locations.length > 0, locations: locations.slice(0, 200) };
+  });
+
   // Sort by severity
   const sevOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   allFindings.sort((a, b) => (sevOrder[a.severity] ?? 5) - (sevOrder[b.severity] ?? 5));
@@ -590,6 +674,7 @@ async function main() {
     ecosystems: scanResults,
     packages: flatPackages,
     threat_matches: threatMatches,
+    ...(cliIocs.length ? { ioc_search: iocSearch } : {}),
     catalogs: catalogs.map(c => ({
       file: c.file,
       campaignName: c.campaignName,
@@ -602,7 +687,8 @@ async function main() {
   fs.mkdirSync(opts.outputDir, { recursive: true });
 
   // Always write JSON file to disk
-  const jsonPath = path.join(opts.outputDir, `hiveguard-${systemInfo.hostname}-${Date.now()}.json`);
+  const outStamp = Date.now();
+  const jsonPath = path.join(opts.outputDir, `hiveguard-${systemInfo.hostname}-${outStamp}.json`);
   output.writeJson(jsonPath, result);
 
   // Always write HTML report (unless --no-report)
@@ -610,6 +696,18 @@ async function main() {
     const htmlPath = path.join(opts.outputDir, `hiveguard-report-${systemInfo.hostname}.html`);
     const html = generateReport(result);
     output.writeHtml(htmlPath, html);
+  }
+
+  // Extra machine-readable formats (--format)
+  const stem = path.join(opts.outputDir, `hiveguard-${systemInfo.hostname}-${outStamp}`);
+  for (const fmt of new Set(opts.formats)) {
+    const writers = {
+      sarif: () => fs.writeFileSync(`${stem}.sarif`, JSON.stringify(exportsFmt.toSarif(result), null, 2)),
+      cyclonedx: () => fs.writeFileSync(`${stem}.cdx.json`, JSON.stringify(exportsFmt.toCycloneDx(result), null, 2)),
+      ndjson: () => fs.writeFileSync(`${stem}.ndjson`, exportsFmt.toNdjson(result)),
+    };
+    if (!writers[fmt]) { logger.warn('output', `Unknown --format "${fmt}" (use ${EXPORT_FORMATS.join(', ')} or all)`); continue; }
+    try { writers[fmt](); } catch (e) { logger.error('output', `Failed to write ${fmt}: ${e.message}`); }
   }
 
   // If --json, also print to stdout
@@ -630,11 +728,22 @@ async function main() {
     }
   }
   process.stderr.write(`     ⚠️  ${allFindings.length} findings (${allFindings.filter(f => f.severity === 'critical').length} critical, ${allFindings.filter(f => f.severity === 'high').length} high)\n`);
+  if (iocSearch.length > 0) {
+    process.stderr.write(`     🔎 Indicators: ${iocSearch.filter(r => r.found).length} of ${iocSearch.length} found\n`);
+    for (const r of iocSearch) {
+      process.stderr.write(`        ${r.found ? 'FOUND    ' : r.error ? 'SKIPPED  ' : 'not found'}  ${r.ioc} (${r.kind})${r.error ? ` — ${r.error}` : ''}\n`);
+      for (const loc of r.locations.slice(0, 5)) process.stderr.write(`                   ${loc}\n`);
+      if (r.locations.length > 5) process.stderr.write(`                   …and ${r.locations.length - 5} more\n`);
+    }
+    if (iocSearch.some(r => ['sha256', 'string'].includes(r.kind))) {
+      process.stderr.write('        (hashes and text are compared against script files HiveGuard inspects, not every file on disk)\n');
+    }
+  }
   process.stderr.write(`     📁 Results: ${opts.outputDir}\n`);
   process.stderr.write('  ────────────────────────────────────────────\n\n');
 
   // Exit code
-  if (threatMatches.length > 0) process.exit(2);
+  if (threatMatches.length > 0 || iocSearch.some(r => r.found)) process.exit(2);
   if (allFindings.some(f => f.severity === 'critical' || f.severity === 'high')) process.exit(1);
   process.exit(0);
 }

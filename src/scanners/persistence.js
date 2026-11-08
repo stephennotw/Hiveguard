@@ -69,9 +69,10 @@ function scan(platform, opts = {}, iocPaths = []) {
   const iocHits = [];
   for (const ioc of iocPaths) {
     const spec = ioc.value;
-    const targets = spec.startsWith('~/')
-      ? homes.map(h => path.join(h, ...spec.slice(2).split('/')))
-      : platform.usersRoot ? [] : [spec];
+    const perHome = spec.startsWith('~/') || /^%(USERPROFILE|HOMEPATH|APPDATA|LOCALAPPDATA|TEMP|TMP)%[\\/]/i.test(spec);
+    const targets = perHome
+      ? homes.map(h => expandHome(spec, h))
+      : platform.usersRoot || /^%/.test(spec) ? [] : [spec];
     for (const t of targets) {
       for (const hit of globExisting(t)) iocHits.push({ path: hit, ioc });
     }
@@ -96,6 +97,17 @@ function scan(platform, opts = {}, iocPaths = []) {
     unreadable,
     findings,
   };
+}
+
+function expandHome(spec, home) {
+  let base = home;
+  let rest = spec.startsWith('~/') ? spec.slice(2) : spec;
+  if (!spec.startsWith('~/')) {
+    for (const [k, v] of Object.entries(homeVars(home))) {
+      if (k.startsWith('%') && spec.toUpperCase().startsWith(k)) { base = v; rest = spec.slice(k.length); break; }
+    }
+  }
+  return path.join(base, ...rest.split(/[\\/]/).filter(Boolean));
 }
 
 function homeVars(home) {
@@ -240,7 +252,7 @@ function judge(entry) {
   const hits = [];
   const files = [];
   const cmd = entry.command || '';
-  if (isIocFilename(entry.name)) hits.push({ label: 'known-worm-filename', severity: 'critical' });
+  if (isIocFilename(entry.name, entry.path)) hits.push({ label: 'known-worm-filename', severity: 'critical' });
   if (cmd) {
     hits.push(...matchPatterns(AUTOSTART_PATTERNS, cmd));
     const runsInterpreter = INTERPRETER.test(cmd);

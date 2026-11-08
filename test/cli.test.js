@@ -35,6 +35,20 @@ describe('hiveguard CLI (end to end, offline)', () => {
     assert.equal(r.json.threat_intel.sources.bumblebee.status, 'skipped');
   });
 
+  it('--format all writes SARIF, CycloneDX and NDJSON; --ioc reports hits and exits 2', () => {
+    const proj = path.join(tmp, 'ioc');
+    write(path.join(proj, 'package-lock.json'), lockfile([['left-pad', '1.3.0'], ['@scope/x', '2.0.0']]));
+    const r = run(proj, ['--format', 'all', '--ioc', '@scope/x,lodash@4.17.21', '--ioc', 'npm:left-pad']);
+    assert.equal(r.code, 2);
+    assert.deepEqual(r.json.ioc_search.map(i => [i.ioc, i.found]), [['@scope/x', true], ['lodash@4.17.21', false], ['npm:left-pad', true]]);
+    assert.equal(r.json.findings.filter(f => f.type === 'ioc_match').length, 2);
+    const out = path.join(tmp, 'out-ioc');
+    const files = fs.readdirSync(out);
+    for (const ext of ['.sarif', '.cdx.json', '.ndjson']) assert.ok(files.some(f => f.endsWith(ext)), ext);
+    const bom = JSON.parse(fs.readFileSync(path.join(out, files.find(f => f.endsWith('.cdx.json'))), 'utf8'));
+    assert.deepEqual(bom.components.map(c => c.purl).sort(), ['pkg:npm/%40scope/x@2.0.0', 'pkg:npm/left-pad@1.3.0']);
+  });
+
   it('exits 1 for a high/critical finding without a threat-intel match', () => {
     const proj = path.join(tmp, 'script');
     write(path.join(proj, 'package-lock.json'), lockfile([['evil', '1.0.0']]));

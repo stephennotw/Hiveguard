@@ -94,16 +94,39 @@ function shellPipeReachesShell(content) {
  * loaded threat-intel catalogs (see src/threat-intel/iocs.js).
  */
 const BUILTIN_IOC_FILES = ['setup_bun.js', 'bun_environment.js', 'router_runtime.js'];
-const iocs = { filenames: new Set(BUILTIN_IOC_FILES), sha256: new Map(), strings: new Map() };
+const builtinFilenames = () => new Map(BUILTIN_IOC_FILES.map(n => [n, 'built-in: Shai-Hulud payload names']));
+const iocs = { filenames: builtinFilenames(), sha256: new Map(), strings: new Map(), hits: [] };
 
+// Each item is { value, source } (a bare string is accepted for file names).
 function configureIocs({ filenames = [], sha256 = [], strings = [] } = {}) {
-  iocs.filenames = new Set([...BUILTIN_IOC_FILES, ...filenames.map(f => f.name || f).map(s => s.toLowerCase())]);
+  iocs.filenames = builtinFilenames();
+  for (const f of filenames) {
+    const item = typeof f === 'string' ? { value: f, source: 'catalog' } : f;
+    iocs.filenames.set(item.value.toLowerCase(), item.source);
+  }
   iocs.sha256 = new Map(sha256.map(h => [h.value.toLowerCase(), h.source]));
   iocs.strings = new Map(strings.map(s => [s.value, s.source]));
+  iocs.hits = [];
 }
 
-function isIocFilename(name) {
-  return iocs.filenames.has(String(name).toLowerCase());
+/** Every indicator match so far: [{ source, kind, file }] (for --ioc reporting). */
+function iocHits() {
+  return iocs.hits.slice();
+}
+
+function recordHit(source, kind, file) {
+  if (iocs.hits.length < 10000) iocs.hits.push({ source, kind, file });
+}
+
+/** The indicator's source when name is a known payload file name, else null (recorded as a hit). */
+function iocFilename(name, file) {
+  const source = iocs.filenames.get(String(name).toLowerCase()) || null;
+  if (source) recordHit(source, 'filename', file || name);
+  return source;
+}
+
+function isIocFilename(name, file) {
+  return iocFilename(name, file) !== null;
 }
 
 // core-js/es5-ext/msw style: node -e "try{require('./postinstall')}catch(e){}". The eval
@@ -168,7 +191,8 @@ function localImports(absPath, root) {
 /** Findings ([{label, severity}]) for one script file, plus its sha256 when it was hashed. */
 function inspectScriptFile(absPath, relPath = absPath) {
   const hits = [];
-  if (isIocFilename(path.basename(relPath))) hits.push({ label: 'known-worm-filename', severity: 'critical' });
+  const nameSource = iocFilename(path.basename(relPath), absPath);
+  if (nameSource) hits.push({ label: 'known-worm-filename', severity: 'critical', ioc: nameSource });
 
   const st = statSafe(absPath);
   if (!st || !st.isFile()) return hits;
@@ -176,12 +200,18 @@ function inspectScriptFile(absPath, relPath = absPath) {
 
   if (iocs.sha256.size > 0 && st.size <= MAX_HASH_BYTES) {
     const digest = sha256File(absPath);
-    if (digest && iocs.sha256.has(digest)) hits.push({ label: 'known-malicious-hash', severity: 'critical', ioc: iocs.sha256.get(digest) });
+    if (digest && iocs.sha256.has(digest)) {
+      hits.push({ label: 'known-malicious-hash', severity: 'critical', ioc: iocs.sha256.get(digest) });
+      recordHit(iocs.sha256.get(digest), 'sha256', absPath);
+    }
   }
 
   const content = readFileSafe(absPath, { maxBytes: MAX_SCRIPT_FILE_BYTES });
   if (!content) return hits;
-  hits.push(...contentHits(content, absPath));
+  for (const h of contentHits(content, absPath)) {
+    hits.push(h);
+    if (h.ioc) recordHit(h.ioc, 'string', absPath);
+  }
   return hits;
 }
 
@@ -191,7 +221,7 @@ function contentHits(content, fileName = '') {
     hits = hits.filter(h => !SHELL_PIPE_LABELS.has(h.label));
   }
   for (const [value, source] of iocs.strings) {
-    if (content.includes(value)) { hits.push({ label: 'known-ioc-string', severity: 'critical', ioc: source }); break; }
+    if (content.includes(value)) hits.push({ label: 'known-ioc-string', severity: 'critical', ioc: source });
   }
   return hits;
 }
@@ -215,7 +245,7 @@ function worstSeverity(matched) {
 
 module.exports = {
   COMMAND_PATTERNS, FILE_PATTERNS, LOCAL_REQUIRE_EVAL,
-  configureIocs, isIocFilename, shellPipeReachesShell,
+  configureIocs, isIocFilename, iocHits, shellPipeReachesShell,
   resolveRequire, referencedScriptFiles, inspectScriptFile, contentHits, localImports,
   matchPatterns, worstSeverity, toPosix,
 };

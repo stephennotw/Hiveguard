@@ -108,6 +108,9 @@ The `.node/` directory is gitignored and never committed to the repo.
 | `--no-report` | Skip HTML report | off |
 | `--no-secrets` | Skip secrets hygiene scan | off |
 | `--max-depth <n>` | Max directory traversal depth | 4 |
+| `--format <list>` | Also write `sarif`, `cyclonedx` (SBOM), `ndjson` (SIEM events), or `all` | none |
+| `--ioc <values>` | Look for indicators on this machine (see [IOC search](#ioc-search)); comma-separated, repeatable | none |
+| `--ioc-file <file>` | Indicators, one per line (`#` comments allowed) | none |
 | `--verbose` / `-v` | Debug logging | off |
 
 ## Self-Check (try it on your own machine)
@@ -196,9 +199,27 @@ No admin/root privileges required. Results are written to `./hiveguard-results/`
 
 ```
 hiveguard-results/
-├── hiveguard-<hostname>-<timestamp>.json   # Full scan results
-└── hiveguard-report-<hostname>.html        # Interactive HTML report
+├── hiveguard-<hostname>-<timestamp>.json      # Full scan results
+├── hiveguard-report-<hostname>.html           # Interactive HTML report
+├── hiveguard-<hostname>-<timestamp>.sarif     # --format sarif: findings (SARIF 2.1.0)
+├── hiveguard-<hostname>-<timestamp>.cdx.json  # --format cyclonedx: SBOM + matches (CycloneDX 1.5)
+└── hiveguard-<hostname>-<timestamp>.ndjson    # --format ndjson: summary + one event per finding
 ```
+
+The SARIF results carry `security-severity` and a stable `partialFingerprints.hiveguard`, so dashboards can track a finding across scans. The CycloneDX SBOM lists every inventoried component with a package URL (purl) where one exists, its locations as `hiveguard:location` properties, and threat-intel / CVE matches as `vulnerabilities`. NDJSON events carry `host`, `scan_time` and `hiveguard_version` on every line for SIEM ingestion.
+
+### IOC search
+
+`--ioc` answers "is this on any machine we scan?" during an incident. It runs the normal scan and reports each indicator as found or not, with locations; findings are added for hits, and the exit code is 2 if any indicator is found.
+
+| Indicator | Example | Where it is looked for |
+|---|---|---|
+| Package | `@antv/a8@0.1.1`, `@antv/a8` (any version), `pypi:requests@2.31.0`, `vscode:nrwl.angular-console` | every inventoried component (lockfiles, environments, extensions, MCP servers) |
+| File path | `~/.local/share/kitty/cat.py`, `%APPDATA%\x\run.js`, `/tmp/kitty-*` | existence, per user profile for `~/` and `%VAR%` paths |
+| File name | `setup_bun.js` | every directory the scan walks, script files and autostart entries |
+| SHA-256 / text / domain | `t.m-kosche.com`, `Shai-Hulud: Here We Go Again` | script files HiveGuard inspects (install hooks, `binding.gyp`, AI hooks, autostart), not every file on disk |
+
+Unscoped npm names without a version need a prefix (`npm:lodash`), so plain words are treated as text.
 
 Note: Threat intel catalogs are loaded into memory at runtime — no disk cache required.
 

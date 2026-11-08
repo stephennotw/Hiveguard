@@ -294,6 +294,13 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   // ── FINDINGS PANEL ──
   html += `<div class="panel" id="panel-findings">
   <h2 style="color:#fff;margin-bottom:1rem">⚠️ Findings</h2>`;
+  if ((result.ioc_search || []).length > 0) {
+    html += `<div class="card"><div class="card-header"><h3>🔎 Indicator search</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${result.ioc_search.filter(r => r.found).length} of ${result.ioc_search.length} found</span></div><div class="card-body"><table><thead><tr><th>Indicator</th><th>Kind</th><th>Result</th></tr></thead><tbody>`;
+    for (const r of result.ioc_search) {
+      html += `<tr><td><code>${esc(r.ioc)}</code></td><td style="font-size:.72rem">${esc(r.kind)}</td><td style="font-size:.72rem">${r.found ? `<span class="sev sev-critical">found</span><div style="color:var(--text-dim);word-break:break-all">${r.locations.slice(0, 20).map(esc).join('<br>')}</div>` : r.error ? esc(r.error) : 'not found'}</td></tr>`;
+    }
+    html += `</tbody></table></div></div>`;
+  }
   for (const f of findings) {
     const borderColor = f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'red' : f.severity === 'medium' ? 'orange' : 'blue';
     const pkgLabel = f.package && f.package !== 'secrets-hygiene' && !f.package.startsWith('env_') && !f.package.startsWith('git_') && !f.package.startsWith('ssh_') ? `<strong>${esc(f.package)}${f.version ? '@' + esc(f.version) : ''}</strong> — ` : '';

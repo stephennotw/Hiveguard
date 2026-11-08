@@ -160,3 +160,21 @@ test('extensions: long invisible-Unicode runs are found, emoji selectors are not
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('catalog paths expand ~/ and %APPDATA%-style prefixes per profile', () => {
+  const root = tmp();
+  try {
+    const home = path.join(root, 'u');
+    fs.mkdirSync(path.join(home, 'AppData', 'Roaming', 'Evil'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'AppData', 'Roaming', 'Evil', 'run.js'), '');
+    const r = scan({ userHomes: [home], usersRoot: root }, {}, [
+      { value: '%APPDATA%\\Evil\\run.js', source: 'a' },
+      { value: '%appdata%/Evil/*.js', source: 'b' },
+      { value: '/etc/never-checked-under-users-root', source: 'c' },
+    ]);
+    assert.deepStrictEqual(r.findings.map(f => [f.ioc, path.relative(home, f.path)]),
+      [['a', path.join('AppData', 'Roaming', 'Evil', 'run.js')], ['b', path.join('AppData', 'Roaming', 'Evil', 'run.js')]]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
