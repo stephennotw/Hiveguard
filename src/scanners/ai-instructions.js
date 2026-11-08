@@ -5,6 +5,7 @@ const path = require('path');
 const { readFileSafe, readdirSafe, statSafe, findProjectDirs } = require('../utils/fs-safe');
 const logger = require('../utils/logger');
 const { scanHidden, sanitizeExcerpt } = require('../utils/text');
+const { stripJsonc, stripBom } = require('../utils/jsonc');
 const { inToolCatalog } = require('../utils/ai-roots');
 
 const SCANNER_ID = 'ai-instructions';
@@ -279,30 +280,7 @@ function autorunTasks(content) {
     .map(t => ({ label: sanitizeExcerpt(t.label || '', 100), command: sanitizeExcerpt([t.command, ...(Array.isArray(t.args) ? t.args : [])].filter(Boolean).join(' '), 300) }));
 }
 
-// Strips // and /* */ comments (outside strings) and trailing commas from JSONC.
-function stripJsonc(text) {
-  const src = stripBom(text);
-  let out = '';
-  let inStr = false;
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i];
-    if (inStr) {
-      out += c;
-      if (c === '\\') { out += src[++i] || ''; continue; }
-      if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') { inStr = true; out += c; continue; }
-    if (c === '/' && src[i + 1] === '/') { while (i < src.length && src[i] !== '\n') i++; out += '\n'; continue; }
-    if (c === '/' && src[i + 1] === '*') { i += 2; while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++; i++; continue; }
-    out += c;
-  }
-  return out.replace(/,(\s*[}\]])/g, '$1');
-}
 
-function stripBom(text) {
-  return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
-}
 
 function makeFinding(tool, filePath, project, hits, text) {
   const order = { critical: 0, high: 1, medium: 2, low: 3 };

@@ -136,7 +136,9 @@ function mergeThreatMatches(target, extra) {
 }
 
 function buildKey(ecosystem, packageName, version) {
-  return `${(ecosystem || '').toLowerCase()}:${(packageName || '').toLowerCase()}:${normalizeVersion(version)}`;
+  // Some published catalogs write scoped names with a doubled '@' ("@@antv/x").
+  const name = (packageName || '').toLowerCase().replace(/^@@+/, '@');
+  return `${(ecosystem || '').toLowerCase()}:${name}:${normalizeVersion(version)}`;
 }
 
 module.exports = { buildIndex, matchPackages, mergeThreatMatches, isConcreteVersion, normalizeVersion };

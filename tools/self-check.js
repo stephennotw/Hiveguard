@@ -75,6 +75,9 @@ add('Inventory');
 const e = result.summary.ecosystems || {};
 add(`  components total: ${result.summary.total_components}`);
 for (const [k, v] of Object.entries(e)) add(`  ${k.padEnd(28)} ${v}`);
+const locks = (result.ecosystems && result.ecosystems.lockfiles) || {};
+for (const [k, v] of count(locks.parsed || [], l => l.type)) add(`    ${String(v).padStart(4)} x ${k} lockfile (${(locks.parsed || []).filter(l => l.type === k).reduce((s, l) => s + l.dependencies, 0)} deps)`);
+for (const [k, v] of count(locks.unparsed || [], u => `${path.basename(u.lockfile)}: ${/^parse error/.test(u.reason) ? 'parse error' : 'not parsed'}`)) add(`    ${String(v).padStart(4)} x ${k}`);
 const ai = (result.ecosystems && result.ecosystems.ai_instructions) || {};
 add(`  directories checked for AI files: ${ai.projects_scanned || 0}`);
 for (const [k, v] of count(ai.inventory || [], i => `${i.tool}: ${path.basename(i.path)}${i.hooks ? ' (has hooks)' : ''}${i.autorun_tasks ? ' (auto-run tasks)' : ''}${i.symlink_target ? ' (symlink)' : ''}`)) {

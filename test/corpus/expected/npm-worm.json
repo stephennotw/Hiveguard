@@ -6,15 +6,17 @@
   ],
   "exit_code": 2,
   "counts": {
-    "components": 4,
+    "components": 5,
     "git_repos": 0,
     "lifecycle_packages": 4
   },
   "threat_matches": [
+    "npm:@antv/a8@0.1.1",
     "npm:@beproduct/nestjs-auth@0.1.18",
     "npm:node-ipc@9.2.3"
   ],
   "findings": [
+    "critical supply_chain_compromise npm:@antv/a8@0.1.1 (antv-mini-shai-hulud.json)",
     "critical supply_chain_compromise npm:@beproduct/nestjs-auth@0.1.18 (mini-shai-hulud.json)",
     "critical supply_chain_compromise npm:node-ipc@9.2.3 (node-ipc-credential-stealer.json)",
     "critical suspicious_lifecycle_script lee/projects/api/node_modules/@beproduct/nestjs-auth [known-worm-filename]"

@@ -76,6 +76,13 @@ describe('threat-intel matcher', () => {
       assert.equal(matches[0].threats[0].attackType, 'flatmap-stream attack');
     });
 
+    it('matches catalog entries written with a doubled scope "@@"', () => {
+      const cats = new Map([['antv.json', { entries: [{ name: 'x', ecosystem: 'npm', package: '@@antv/a8', versions: ['0.1.1'] }] }]]);
+      const { threatIndex } = buildIndex(cats);
+      const matches = matchPackages([{ ecosystem: 'npm', name: '@antv/a8', version: '0.1.1' }], threatIndex);
+      assert.equal(matches.length, 1);
+    });
+
     it('returns empty for safe packages', () => {
       const { threatIndex } = buildIndex(sampleCatalogs);
       const matches = matchPackages([

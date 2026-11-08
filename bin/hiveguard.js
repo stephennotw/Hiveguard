@@ -44,6 +44,7 @@ const goScanner = require(path.join(SRC_ROOT, 'scanners', 'go'));
 const composerScanner = require(path.join(SRC_ROOT, 'scanners', 'composer'));
 const rubygemsScanner = require(path.join(SRC_ROOT, 'scanners', 'rubygems'));
 const cargoScanner = require(path.join(SRC_ROOT, 'scanners', 'cargo'));
+const lockfilesScanner = require(path.join(SRC_ROOT, 'scanners', 'lockfiles'));
 const editorExtScanner = require(path.join(SRC_ROOT, 'scanners', 'editor-extensions'));
 const browserExtScanner = require(path.join(SRC_ROOT, 'scanners', 'browser-extensions'));
 const mcpScanner = require(path.join(SRC_ROOT, 'scanners', 'mcp-configs'));
@@ -230,6 +231,7 @@ async function main() {
   const lockfileNames = [
     'package-lock.json', 'pyvenv.cfg', 'requirements.txt',
     'go.sum', 'composer.lock', 'Gemfile.lock', 'Cargo.lock',
+    ...lockfilesScanner.LOCKFILE_NAMES,
   ];
 
   let t0 = Date.now();
@@ -256,6 +258,34 @@ async function main() {
     venvConfigs: foundFiles.get('pyvenv.cfg'),
     reqFiles: foundFiles.get('requirements.txt'),
   }));
+  // pnpm / yarn / bun / poetry / uv / pipenv lockfiles feed the npm and pypi inventories.
+  // A directory that already has a package-lock.json keeps that (richer) source.
+  const extraLocks = timedScan('lockfiles', () => lockfilesScanner.scan(foundFiles));
+  const npmDirs = new Set((scanResults.npm.projects || []).map(p => path.resolve(p.project_path)));
+  for (const proj of extraLocks.projects) {
+    if (proj.ecosystem === 'npm') {
+      if (npmDirs.has(path.resolve(proj.project_path))) continue;
+      const { ecosystem, ...rest } = proj;
+      scanResults.npm.projects.push(rest);
+    } else {
+      const seenPy = new Set(scanResults.pypi.packages.map(p => `${p.name}@${p.version}@${p.source_dir}`));
+      for (const d of proj.dependencies) {
+        const key = `${d.name}@${d.version}@${proj.project_path}`;
+        if (seenPy.has(key)) continue;
+        seenPy.add(key);
+        scanResults.pypi.packages.push({
+          name: d.name, version: d.version, source_dir: proj.project_path,
+          source_type: proj.lockfile_type, installer: proj.lockfile_type, confidence: 'high',
+        });
+      }
+    }
+  }
+  scanResults.npm.total_projects = scanResults.npm.projects.length;
+  scanResults.pypi.total = scanResults.pypi.packages.length;
+  scanResults.lockfiles = {
+    parsed: extraLocks.projects.map(p => ({ lockfile: p.lockfile, type: p.lockfile_type, ecosystem: p.ecosystem, dependencies: p.total_dependencies })),
+    unparsed: extraLocks.unparsed,
+  };
   scanResults.go = timedScan('go', () => goScanner.scan(platform, scanOpts, foundFiles.get('go.sum')));
   scanResults.composer = timedScan('composer', () => composerScanner.scan(platform, scanOpts, foundFiles.get('composer.lock')));
   scanResults.rubygems = timedScan('rubygems', () => rubygemsScanner.scan(platform, scanOpts, foundFiles.get('Gemfile.lock')));
@@ -514,6 +544,8 @@ async function main() {
         composer_projects: scanResults.composer.total_projects,
         rubygems_projects: scanResults.rubygems.total_projects,
         cargo_projects: scanResults.cargo.total_projects,
+        extra_lockfiles: scanResults.lockfiles.parsed.length,
+        lockfiles_unparsed: scanResults.lockfiles.unparsed.length,
         editor_extensions: scanResults.editor_extensions.total,
         browser_extensions: scanResults.browser_extensions.total,
         mcp_servers: scanResults.mcp_configs.total_servers,

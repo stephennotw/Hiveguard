@@ -310,7 +310,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<div class="panel" id="panel-npm"><h2 style="color:#fff;margin-bottom:1rem">📦 npm</h2>`;
   for (const proj of (ecosystems.npm?.projects || [])) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-      <h3>${esc(proj.project)}${proj.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(proj.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${proj.total_dependencies} deps</span>
+      <h3>${esc(proj.project)}${proj.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(proj.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${proj.lockfile_type ? `${esc(proj.lockfile_type)} · ` : ''}${proj.total_dependencies} deps</span>
     </div><div class="card-body collapsed">
       <input type="text" style="width:100%;padding:.4rem .6rem;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.8rem;margin-bottom:.5rem;outline:none" placeholder="Filter..." oninput="filterTable(this)">
       <table><thead><tr><th>Package</th><th>Version</th></tr></thead><tbody>`;

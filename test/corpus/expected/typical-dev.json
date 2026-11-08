@@ -1,12 +1,10 @@
 {
   "machine": "typical-dev",
   "description": "Ordinary developer laptop: popular packages with real-world install scripts, husky, pnpm workspace, emoji and Hebrew in CLAUDE.md, user-level Claude hooks. Nothing here should be flagged above medium.",
-  "known_gaps": [
-    "pnpm-lock.yaml is not parsed, so the monorepo contributes no components to threat-intel matching (its node_modules are still checked for install scripts)."
-  ],
+  "known_gaps": [],
   "exit_code": 0,
   "counts": {
-    "components": 5,
+    "components": 7,
     "git_repos": 1,
     "lifecycle_packages": 7
   },

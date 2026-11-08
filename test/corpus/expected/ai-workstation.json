@@ -6,7 +6,7 @@
   ],
   "exit_code": 2,
   "counts": {
-    "components": 6,
+    "components": 8,
     "git_repos": 0,
     "lifecycle_packages": 0
   },
@@ -37,7 +37,8 @@
   ],
   "ai_sdks": [
     "npm:@anthropic-ai/sdk 0.39.0 x1",
-    "npm:openai 4.77.0 x1"
+    "npm:openai 4.77.0 x1",
+    "pypi:anthropic 0.40.0 x1"
   ],
   "editors_discovered": [
     "newfork"
