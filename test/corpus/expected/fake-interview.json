@@ -2,7 +2,6 @@
   "machine": "fake-interview",
   "description": "Windows-style profile: work repo in OneDrive with a backdoored git hook, and a take-home assignment in Downloads that executes on npm install, on folder open in VS Code, and on Claude Code session start, plus a rules file with tag-character smuggling.",
   "known_gaps": [
-    "The .claude/setup.mjs payload referenced by the project hook is not itself inspected.",
     "By design, files in cloud-synced folders (OneDrive here) are listed but never read, so the backdoored post-checkout hook in the OneDrive repo is reported as info only."
   ],
   "exit_code": 1,
@@ -13,10 +12,10 @@
   },
   "threat_matches": [],
   "findings": [
+    "high suspicious_ai_instruction sam/Downloads/take-home-assignment/.claude/settings.json [ip-address-url,project-agent-hooks,token-env-harvest]",
     "high suspicious_ai_instruction sam/Downloads/take-home-assignment/.cursor/rules/style.mdc [hidden-unicode]",
-    "high suspicious_lifecycle_script sam/Downloads/take-home-assignment [ip-address-url,token-env-harvest]",
-    "medium suspicious_ai_instruction sam/Downloads/take-home-assignment/.claude/settings.json [project-agent-hooks]",
-    "medium suspicious_ai_instruction sam/Downloads/take-home-assignment/.vscode/tasks.json [autorun-on-folder-open]"
+    "high suspicious_ai_instruction sam/Downloads/take-home-assignment/.vscode/tasks.json [autorun-on-folder-open,ip-address-url,token-env-harvest]",
+    "high suspicious_lifecycle_script sam/Downloads/take-home-assignment [ip-address-url,token-env-harvest]"
   ],
   "git_hooks": [
     "info sam/OneDrive - Contoso/Documents/GitHub/payments/.git/hooks/post-checkout (.git/hooks) [] not-read"

@@ -18,7 +18,7 @@ function generateReport(result) {
   const ecosystems = result.ecosystems || {};
   const aiSignalCount = (ecosystems.mcp_configs?.total_servers || 0) + (ecosystems.ai_models?.total || 0)
     + (ecosystems.ai_usage?.providers?.length || 0) + (ecosystems.ai_usage?.sdks?.length || 0);
-  const hygieneFlagged = (ecosystems.lifecycle_scripts?.total_findings || 0) + (ecosystems.git_hooks?.suspicious || 0) + (ecosystems.ai_instructions?.suspicious || 0);
+  const hygieneFlagged = (ecosystems.lifecycle_scripts?.total_findings || 0) + (ecosystems.git_hooks?.suspicious || 0) + (ecosystems.ai_instructions?.suspicious || 0) + (ecosystems.persistence?.findings || []).length;
 
   // Build searchable package array for client-side
   const searchPkgs = packages.map((p, i) => ({
@@ -444,8 +444,8 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   // ── SCRIPTS, HOOKS & AI PANEL ──
   const sevTag = (sev) => `<span class="sev sev-${esc(sev)}">${esc(sev)}</span>`;
   const codeCell = (t) => `<code style="font-size:.68rem;word-break:break-all;color:var(--text-dim)">${esc(t)}</code>`;
-  html += `<div class="panel" id="panel-hygiene"><h2 style="color:#fff;margin-bottom:.5rem">🪝 Install Scripts, Git Hooks &amp; AI Files</h2>
-    <p style="color:var(--text-dim);font-size:.82rem;margin-bottom:1.5rem">Code that runs automatically: npm install hooks, git hooks, and instruction/config files read by AI coding assistants. Excerpts are attacker-controlled text.</p>`;
+  html += `<div class="panel" id="panel-hygiene"><h2 style="color:#fff;margin-bottom:.5rem">🪝 Install Scripts, Git Hooks, AI Files &amp; Autostart</h2>
+    <p style="color:var(--text-dim);font-size:.82rem;margin-bottom:1.5rem">Code that runs automatically: npm install hooks and binding.gyp commands, git hooks, instruction/config files read by AI coding assistants, and programs set to start on login. Excerpts are attacker-controlled text.</p>`;
 
   const lc = ecosystems.lifecycle_scripts || {};
   html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
@@ -455,7 +455,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   else {
     html += `<table><thead><tr><th>Severity</th><th>Package</th><th>Hook</th><th>Triggers</th><th>Script</th></tr></thead><tbody>`;
     for (const f of lc.findings) {
-      html += `<tr><td>${sevTag(f.severity)}</td><td>${esc(f.package)}<div style="font-size:.65rem;color:var(--text-dim)">${esc(f.path)}</div></td><td>${esc(f.hook)}</td><td style="font-size:.7rem">${(f.triggers || []).map(esc).join(', ')}${(f.script_files || []).length ? `<div style="color:var(--text-dim)">via ${f.script_files.map(esc).join(', ')}</div>` : ''}</td><td>${codeCell(f.script)}</td></tr>`;
+      html += `<tr><td>${sevTag(f.severity)}</td><td>${esc(f.package)}<div style="font-size:.65rem;color:var(--text-dim)">${esc(f.path)}</div></td><td>${esc(f.hook || (f.dependency ? (f.dependency === 'resolved' ? 'installed from URL' : `dependency ${f.dependency}`) : ''))}</td><td style="font-size:.7rem">${(f.triggers || []).map(esc).join(', ')}${(f.script_files || []).length ? `<div style="color:var(--text-dim)">via ${f.script_files.map(esc).join(', ')}</div>` : ''}</td><td>${codeCell(f.script || f.url || '')}</td></tr>`;
     }
     html += `</tbody></table>`;
   }
@@ -493,6 +493,28 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
       for (const t of (item.autorun_tasks || [])) details.push(`runs on folder open: ${codeCell(t.command)}`);
       if (item.symlink_target) details.push(`→ ${esc(item.symlink_target)}`);
       html += `<tr><td>${f ? sevTag(f.severity) : '<span style="color:var(--text-dim);font-size:.7rem">—</span>'}</td><td>${esc(item.tool)}</td><td style="font-size:.72rem;word-break:break-all">${esc(item.path)}</td><td style="font-size:.7rem">${details.join('<br>') || '—'}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  html += `</div></div>`;
+
+  const ps = ecosystems.persistence || {};
+  const psFindings = ps.findings || [];
+  const psFlags = new Map(psFindings.filter(f => f.type === 'suspicious_autostart').map(f => [f.path, f]));
+  html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+    <h3>🚀 Autostart &amp; persistence</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${psFindings.length} flagged / ${ps.total || 0} entries</span>
+  </div><div class="card-body">`;
+  for (const f of psFindings.filter(x => x.type === 'known_ioc_file')) {
+    html += `<p style="font-size:.8rem">${sevTag(f.severity)} Known persistence file present: <code>${esc(f.path)}</code> <span style="color:var(--text-dim)">(${esc(f.ioc)})</span></p>`;
+  }
+  if ((ps.entries || []).length === 0) html += `<p style="color:var(--text-dim);font-size:.8rem">No autostart entries found (LaunchAgents, XDG autostart, systemd user units, Startup folder${(ps.unreadable || []).length ? '; scheduled tasks need an elevated scan' : ''}).</p>`;
+  else {
+    html += `<table><thead><tr><th>Severity</th><th>Kind</th><th>Entry</th><th>Command</th></tr></thead><tbody>`;
+    const rank = { critical: 0, high: 1, medium: 2, low: 3 };
+    const rows = [...ps.entries].sort((a, b) => (rank[(psFlags.get(a.path) || {}).severity] ?? 9) - (rank[(psFlags.get(b.path) || {}).severity] ?? 9));
+    for (const e of rows) {
+      const f = psFlags.get(e.path);
+      html += `<tr><td>${f ? sevTag(f.severity) : '<span style="color:var(--text-dim);font-size:.7rem">—</span>'}</td><td style="font-size:.72rem">${esc(e.kind)}</td><td style="font-size:.72rem;word-break:break-all">${esc(e.name)}${e.user ? ` <span style="color:var(--accent-light)">[${esc(e.user)}]</span>` : ''}${f ? `<div style="color:var(--text-dim)">${(f.triggers || []).map(esc).join(', ')}</div>` : ''}</td><td>${e.command ? codeCell(e.command) : '<span style="color:var(--text-dim);font-size:.7rem">not readable</span>'}</td></tr>`;
     }
     html += `</tbody></table>`;
   }

@@ -45,6 +45,9 @@ const composerScanner = require(path.join(SRC_ROOT, 'scanners', 'composer'));
 const rubygemsScanner = require(path.join(SRC_ROOT, 'scanners', 'rubygems'));
 const cargoScanner = require(path.join(SRC_ROOT, 'scanners', 'cargo'));
 const lockfilesScanner = require(path.join(SRC_ROOT, 'scanners', 'lockfiles'));
+const persistenceScanner = require(path.join(SRC_ROOT, 'scanners', 'persistence'));
+const { configureIocs } = require(path.join(SRC_ROOT, 'utils', 'script-inspect'));
+const { extractIocs } = require(path.join(SRC_ROOT, 'threat-intel', 'iocs'));
 const editorExtScanner = require(path.join(SRC_ROOT, 'scanners', 'editor-extensions'));
 const browserExtScanner = require(path.join(SRC_ROOT, 'scanners', 'browser-extensions'));
 const mcpScanner = require(path.join(SRC_ROOT, 'scanners', 'mcp-configs'));
@@ -224,6 +227,10 @@ async function main() {
   });
   const { catalogs, threatIndex, totalEntries, totalVersions } = buildIndex(intelResult.inMemoryCatalogs);
 
+  // File-level indicators (payload names, hashes, markers, persistence paths) from the catalogs
+  const iocs = extractIocs(catalogs);
+  configureIocs({ filenames: iocs.filenames.map(i => i.value), sha256: iocs.sha256, strings: iocs.strings });
+
   // Step 4: Single-pass directory walk for all lockfile types
   logger.info('core', 'Starting scanners...');
   const scanOpts = { maxDepth: opts.maxDepth };
@@ -327,6 +334,7 @@ async function main() {
   scanResults.ai_instructions = timedScan('ai-instruct', () => aiInstructionsScanner.scan(platform, scanOpts, projectDirs));
   scanResults.ai_models = timedScan('ai-models', () => aiModelsScanner.scan(platform, scanOpts, modelCandidates));
   scanResults.ai_apps = timedScan('ai-apps', () => aiAppsScanner.scan(platform, scanOpts));
+  scanResults.persistence = timedScan('persistence', () => persistenceScanner.scan(platform, scanOpts, iocs.paths));
 
   // Discovered user profiles for attributing findings
   const userHomes = platform.userHomes || [];
@@ -358,6 +366,9 @@ async function main() {
   }
   for (const cfg of (scanResults.mcp_configs?.configs || [])) {
     cfg.user = resolveUser(cfg.config_path, userHomes);
+  }
+  for (const e of (scanResults.persistence?.entries || [])) {
+    e.user = resolveUser(e.path, userHomes);
   }
 
   // Step 5: Build flat package list for threat matching + CVE checking
@@ -495,6 +506,11 @@ async function main() {
     }
   }
 
+  // Autostart entries and catalog persistence files
+  for (const f of (scanResults.persistence.findings || [])) {
+    allFindings.push({ user: resolveUser(f.path, userHomes), package: f.name || path.basename(f.path), version: '', ...f });
+  }
+
   // Sort by severity
   const sevOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   allFindings.sort((a, b) => (sevOrder[a.severity] ?? 5) - (sevOrder[b.severity] ?? 5));
@@ -561,6 +577,8 @@ async function main() {
         ai_sdks: scanResults.ai_usage.sdks.length,
         editors_discovered: (scanResults.editor_extensions.discovered_editors || []).length,
         ai_apps_known: new Set(scanResults.ai_apps.apps.map(a => a.id)).size,
+        autostart_entries: scanResults.persistence.total,
+        threat_intel_iocs: iocs.sha256.length + iocs.filenames.length + iocs.paths.length + iocs.strings.length,
       },
     },
     findings: allFindings,

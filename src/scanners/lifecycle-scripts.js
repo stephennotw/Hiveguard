@@ -5,6 +5,10 @@ const path = require('path');
 const { readJsonSafe, readFileSafe, statSafe, existsSafe } = require('../utils/fs-safe');
 const logger = require('../utils/logger');
 const { sanitizeExcerpt } = require('../utils/text');
+const {
+  COMMAND_PATTERNS, LOCAL_REQUIRE_EVAL, resolveRequire, referencedScriptFiles,
+  inspectScriptFile, matchPatterns, worstSeverity,
+} = require('../utils/script-inspect');
 
 const SCANNER_ID = 'lifecycle-scripts';
 
@@ -16,92 +20,8 @@ const LIFECYCLE_HOOKS = [
 
 const MAX_PACKAGE_JSON_BYTES = 1024 * 1024;
 const MAX_SCRIPT_CHARS = 4096;
-const MAX_SCRIPT_FILE_BYTES = 64 * 1024;
-const OVERSIZED_SCRIPT_FILE_BYTES = 1024 * 1024;
+const MAX_GYP_BYTES = 256 * 1024;
 const MAX_NESTING = 6;
-
-// All gaps are bounded ([^\n]{0,200}) so matching stays linear on hostile input.
-const SCRIPT_PATTERNS = [
-  { pattern: /\bcurl\b[^\n]{0,200}\|\s*(bash|sh|node)\b/, label: 'pipe-to-shell', severity: 'critical' },
-  { pattern: /\bwget\b[^\n]{0,200}\|\s*(bash|sh|node)\b/, label: 'pipe-to-shell', severity: 'critical' },
-  { pattern: /\beval\s*\(/, label: 'eval-call', severity: 'high' },
-  { pattern: /\bchild_process\b/, label: 'child_process-import', severity: 'high' },
-  { pattern: /\bexec\s*\(/, label: 'exec-call', severity: 'high' },
-  { pattern: /\bexecSync\b/, label: 'execSync-call', severity: 'high' },
-  { pattern: /\bspawn\s*\(/, label: 'spawn-call', severity: 'medium' },
-  { pattern: /Buffer\.from\s*\([^)]{0,200},\s*['"]base64['"]/, label: 'base64-decode', severity: 'high' },
-  { pattern: /\batob\s*\(/, label: 'base64-decode', severity: 'high' },
-  { pattern: /\\x[0-9a-fA-F]{2}[^\n]{0,200}\\x[0-9a-fA-F]{2}[^\n]{0,200}\\x[0-9a-fA-F]{2}/, label: 'hex-encoded-strings', severity: 'high' },
-  { pattern: /https?:\/\/\d+\.\d+\.\d+\.\d+/, label: 'ip-address-url', severity: 'high' },
-  { pattern: /\bpowershell\b[^\n]{0,200}\s-e(nc(oded(command)?)?)?\b/i, label: 'powershell-encoded', severity: 'critical' },
-  { pattern: /\bnet\s+user\b/i, label: 'user-creation', severity: 'critical' },
-  { pattern: /(\/dev\/tcp\/|\bnc\b[^\n]{0,200}\s-e\b|\bncat\b[^\n]{0,200}\s-e\b)/, label: 'reverse-shell', severity: 'critical' },
-  { pattern: /process\.env\.(HOME|USERPROFILE|APPDATA)/, label: 'home-dir-access', severity: 'medium' },
-  { pattern: /\.(ssh|gnupg|aws|npmrc|netrc)\b/, label: 'credential-file-access', severity: 'high' },
-  { pattern: /node\s+-e\s+['"]/, label: 'node-eval', severity: 'high' },
-];
-
-// Applied to files an install hook runs. Legit installers (esbuild, node-gyp, prebuild)
-// routinely use child_process/https/env, so only high-signal behaviour is flagged here.
-const FILE_PATTERNS = [
-  { pattern: /\bcurl\b[^\n]{0,200}\|\s*(bash|sh)\b/, label: 'pipe-to-shell', severity: 'critical' },
-  { pattern: /\bwget\b[^\n]{0,200}\|\s*(bash|sh)\b/, label: 'pipe-to-shell', severity: 'critical' },
-  { pattern: /(\/dev\/tcp\/|\bnc\b[^\n]{0,200}\s-e\b)/, label: 'reverse-shell', severity: 'critical' },
-  { pattern: /\bpowershell\b[^\n]{0,200}\s-e(nc(oded(command)?)?)?\b/i, label: 'powershell-encoded', severity: 'critical' },
-  { pattern: /https?:\/\/\d+\.\d+\.\d+\.\d+/, label: 'ip-address-url', severity: 'high' },
-  { pattern: /\beval\s*\(\s*(atob|Buffer\.from)\s*\(/, label: 'eval-decoded-payload', severity: 'high' },
-  { pattern: /process\.env\.(NPM_TOKEN|GITHUB_TOKEN|GH_TOKEN|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)\b/, label: 'token-env-harvest', severity: 'high' },
-  { pattern: /\btrufflehog\b/i, label: 'secret-scanner-download', severity: 'high' },
-  { pattern: /--dangerously-skip-permissions|--yolo\b|--trust-all-tools/, label: 'ai-cli-permission-bypass', severity: 'critical' },
-  { pattern: /\.(ssh|aws)[\\/]|\bid_rsa\b|\.npmrc\b/, label: 'credential-file-access', severity: 'medium' },
-];
-
-// A "curl ... | sh" pipeline needs a shell. In JavaScript the text only matters if it
-// flows into a shell call; bun's install.js, for example, keeps its installer command in a
-// variable used only in an Error message, while also spawning powershell for an unrelated
-// CPU check. Without data-flow analysis, two cheap checks: a shell call close to the text,
-// or the variable the text is assigned to appearing in a shell call's arguments.
-const SHELL_SINKS = [
-  /(^|[^.\w])exec\s*\(|\.execSync\s*\(|(^|[^.\w])execSync\s*\(|\b(child_?process|childProcess|cp|import_child_process(\.default)?)\.exec\s*\(/gi,
-  /\bshell\s*:\s*(true|['"])/g,
-  /\b(spawn|spawnSync|execFile|execFileSync)\s*\(\s*['"`]((ba|z)?sh|cmd(\.exe)?|powershell(\.exe)?|pwsh)['"`]/g,
-  /\beval\s*\(|\bnew\s+Function\s*\(/g,
-];
-const PIPE_TO_SHELL = /\b(curl|wget)\b[^\n]{0,200}\|\s*(bash|sh)\b/g;
-const SINK_WINDOW_BEFORE = 400;
-const SINK_WINDOW_AFTER = 200;
-const SHELL_PIPE_LABELS = new Set(['pipe-to-shell']);
-
-// True when identifier appears as a whole word in text.
-function usesIdentifier(text, identifier) {
-  const escaped = identifier.replace(/[$]/g, '\\$');
-  return new RegExp('(^|[^\\w$])' + escaped + '($|[^\\w$])').test(text);
-}
-
-function shellPipeReachesShell(content) {
-  const sinks = [];
-  for (const re of SHELL_SINKS) for (const m of content.matchAll(re)) sinks.push(m.index);
-  if (sinks.length === 0) return false;
-  for (const m of content.matchAll(PIPE_TO_SHELL)) {
-    const start = m.index;
-    const end = start + m[0].length;
-    if (sinks.some(i => i >= start - SINK_WINDOW_BEFORE && i <= end + SINK_WINDOW_AFTER)) return true;
-    const lineStart = content.lastIndexOf('\n', start) + 1;
-    const assigned = content.slice(lineStart, start).match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=|\b([A-Za-z_$][\w$]*)\s*=\s*[^=]/);
-    const name = assigned && (assigned[1] || assigned[2]);
-    if (name && sinks.some(i => usesIdentifier(content.slice(i, i + 300).split(';')[0], name))) return true;
-  }
-  return false;
-}
-
-// Install-hook payload filenames from Shai-Hulud / Mini Shai-Hulud style worms
-const KNOWN_IOC_FILES = new Set(['setup_bun.js', 'bun_environment.js', 'router_runtime.js']);
-
-// core-js/es5-ext/msw style: node -e "try{require('./postinstall')}catch(e){}". The eval
-// only loads a local file, so the file is inspected instead of flagging the eval.
-const LOCAL_REQUIRE_EVAL = /^\s*node\s+-e\s+(["'])\s*try\s*\{\s*require\(\s*(["'])(\.\/[\w./-]+)\2\s*\)\s*;?\s*\}\s*catch\s*(\(\s*\w*\s*\))?\s*\{\s*\}\s*\1\s*$/;
-
-const SCRIPT_FILE_REF = /\b(?:node|bun|deno|sh|bash)\s+(?:-{1,2}[\w-]+(?:=\S+)?\s+)*["']?([\w./@-]+\.(?:c?js|mjs|ts|sh))\b/g;
 
 function scan(platform, opts = {}, npmProjects) {
   const projects = npmProjects || [];
@@ -118,6 +38,7 @@ function scan(platform, opts = {}, npmProjects) {
     if (projPkgJson && projPkgJson.scripts) {
       findings.push(...checkScripts(projPkgJson.scripts, projPkgJson.name || path.basename(projectDir), project, projectDir));
     }
+    if (projPkgJson) findings.push(...urlDependencies(projPkgJson, projPkgJson.name || path.basename(projectDir), project, projectDir, true));
     const root = realpathOr(projectDir);
     scanNodeModulesRoot(path.join(projectDir, 'node_modules'), { project, root, findings, stats }, path.join(root, 'node_modules'));
   }
@@ -198,10 +119,13 @@ function scanFromHiddenLockfile(packages, baseDir, ctx) {
     ctx.stats.seen.add(pkgPath);
     ctx.stats.packagesScanned++;
     ctx.stats.viaHidden++;
-    if (!info.hasInstallScript) continue;
     const name = info.name || rel.split('node_modules/').pop();
+    const remote = remoteTarball(info.resolved);
+    if (remote) ctx.findings.push(urlFinding(name, ctx.project, pkgPath, 'resolved', info.resolved, remote));
+    if (!info.hasInstallScript) continue;
     const pkgJson = readPackageJson(pkgPath, ctx);
     if (pkgJson && pkgJson.scripts) ctx.findings.push(...checkScripts(pkgJson.scripts, pkgJson.name || name, ctx.project, pkgPath));
+    ctx.findings.push(...checkBindingGyp(pkgPath, pkgJson, pkgJson && pkgJson.name || name, ctx));
   }
 }
 
@@ -260,6 +184,8 @@ function scanPackageDir(pkgPath, dirent, pkgName, ctx, depth, realGuess) {
   if (pkgJson && pkgJson.scripts) {
     ctx.findings.push(...checkScripts(pkgJson.scripts, pkgJson.name || pkgName, ctx.project, pkgPath));
   }
+  if (pkgJson) ctx.findings.push(...urlDependencies(pkgJson, pkgJson.name || pkgName, ctx.project, pkgPath, false));
+  ctx.findings.push(...checkBindingGyp(pkgPath, pkgJson, (pkgJson && pkgJson.name) || pkgName, ctx));
   scanNodeModules(path.join(pkgPath, 'node_modules'), ctx, depth + 1, path.join(r.real, 'node_modules'));
 }
 
@@ -274,11 +200,6 @@ function resolveDir(p, dirent, ctx, realGuess) {
   if (real !== ctx.root && !real.startsWith(ctx.root + path.sep)) return null;
   const st = statSafe(real);
   return st && st.isDirectory() ? { path: p, real } : null;
-}
-
-// Script paths are reported as npm scripts write them, identically on every OS.
-function toPosix(p) {
-  return p.split(path.sep).join('/');
 }
 
 function realpathOr(p) {
@@ -298,7 +219,7 @@ function readDirEntries(dir) {
 // Cumulative time per filesystem activity within one scan.
 const timing = {
   totals: {},
-  reset() { this.totals = { list_dirs: 0, read_package_json: 0, resolve_links: 0, read_script_files: 0 }; },
+  reset() { this.totals = { list_dirs: 0, read_package_json: 0, resolve_links: 0, read_script_files: 0, binding_gyp: 0 }; },
   measure(key, fn) {
     const t = process.hrtime.bigint();
     try { return fn(); } finally { this.totals[key] += Number(process.hrtime.bigint() - t) / 1e6; }
@@ -316,7 +237,7 @@ function checkScripts(scripts, packageName, project, pkgDir) {
 
     const text = script.slice(0, MAX_SCRIPT_CHARS);
     const localRequire = text.match(LOCAL_REQUIRE_EVAL);
-    const matched = localRequire ? [] : matchPatterns(SCRIPT_PATTERNS, text);
+    const matched = localRequire ? [] : matchPatterns(COMMAND_PATTERNS, text);
     const scriptFiles = [];
     const refs = localRequire ? resolveRequire(localRequire[3], pkgDir) : referencedScriptFiles(text, pkgDir);
 
@@ -348,63 +269,124 @@ function checkScripts(scripts, packageName, project, pkgDir) {
   return hits;
 }
 
-// Node's resolution for a local require: exact file, known extensions, then index files.
-function resolveRequire(spec, pkgDir) {
-  if (!pkgDir) return [];
-  const root = path.resolve(pkgDir);
-  const base = path.resolve(root, spec);
-  if (base !== root && !base.startsWith(root + path.sep)) return [];
-  const candidates = [base, ...['.js', '.cjs', '.mjs'].map(e => base + e), ...['index.js', 'index.cjs'].map(i => path.join(base, i))];
-  const found = candidates.find(c => { const st = statSafe(c); return st && st.isFile(); });
-  return found ? [{ abs: found, rel: toPosix(path.relative(root, found)) }] : [];
+/**
+ * PhantomRaven-style "remote dynamic dependencies": a dependency given as an http(s) URL
+ * is fetched from that server at install time, outside the registry and its malware
+ * scanning. Registry tarballs (any host, including private registries) have the
+ * "/<name>/-/<name>-<version>.tgz" shape; git and GitHub shorthands are not flagged.
+ */
+const DEP_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies'];
+
+function remoteTarball(spec) {
+  if (typeof spec !== 'string' || !/^https?:\/\//i.test(spec)) return null;
+  let u;
+  try { u = new URL(spec); } catch { return null; }
+  if (/\/-\/[^/]+\.tgz$/i.test(u.pathname)) return null;
+  if (/^(codeload\.github\.com|github\.com|gitlab\.com|bitbucket\.org)$/i.test(u.hostname)) return null;
+  const ip = /^\d+\.\d+\.\d+\.\d+$/.test(u.hostname);
+  return { host: u.hostname, plaintext: u.protocol === 'http:', ip };
 }
 
-// Files referenced as `node x.js`, `sh ./install.sh`, ... resolved inside pkgDir only.
-function referencedScriptFiles(script, pkgDir) {
-  const refs = [];
-  if (!pkgDir) return refs;
-  const root = path.resolve(pkgDir);
-  for (const m of script.matchAll(SCRIPT_FILE_REF)) {
-    const abs = path.resolve(root, m[1]);
-    if (abs !== root && !abs.startsWith(root + path.sep)) continue;
-    if (!refs.some(r => r.abs === abs)) refs.push({ abs, rel: toPosix(path.relative(root, abs)) });
-  }
-  return refs;
+function urlFinding(pkgName, project, pkgPath, dep, spec, info) {
+  const triggers = ['url-dependency', ...(info.plaintext ? ['plaintext-http'] : []), ...(info.ip ? ['ip-address-url'] : [])];
+  return {
+    severity: info.plaintext || info.ip ? 'high' : 'medium',
+    type: 'remote_url_dependency',
+    ecosystem: 'npm',
+    package: pkgName,
+    project,
+    dependency: dep,
+    url: sanitizeExcerpt(spec, 300),
+    triggers,
+    path: pkgPath,
+    text: dep === 'resolved'
+      ? `${pkgName} was installed from ${info.host}, outside a package registry (${triggers.join(', ')})`
+      : `${pkgName} depends on "${dep}" fetched from ${info.host}, outside a package registry (${triggers.join(', ')})`,
+  };
 }
 
-function inspectScriptFile(absPath, relPath) {
-  const hits = [];
-  if (KNOWN_IOC_FILES.has(path.basename(relPath))) {
-    hits.push({ label: 'known-worm-filename', severity: 'critical' });
+function urlDependencies(pkgJson, pkgName, project, pkgPath, includeDev) {
+  const out = [];
+  for (const field of includeDev ? [...DEP_FIELDS, 'devDependencies'] : DEP_FIELDS) {
+    const deps = pkgJson[field];
+    if (!deps || typeof deps !== 'object') continue;
+    for (const [dep, spec] of Object.entries(deps)) {
+      const info = remoteTarball(spec);
+      if (info) out.push(urlFinding(pkgName, project, pkgPath, dep, spec, info));
+    }
   }
-
-  const st = statSafe(absPath);
-  if (!st || !st.isFile()) return hits;
-  if (st.size > OVERSIZED_SCRIPT_FILE_BYTES) {
-    hits.push({ label: 'oversized-install-script', severity: 'medium' });
-  }
-
-  const content = readFileSafe(absPath, { maxBytes: MAX_SCRIPT_FILE_BYTES });
-  if (!content) return hits;
-  let fileHits = matchPatterns(FILE_PATTERNS, content);
-  if (/\.(c?js|mjs|ts)$/i.test(absPath) && !shellPipeReachesShell(content)) {
-    fileHits = fileHits.filter(h => !SHELL_PIPE_LABELS.has(h.label));
-  }
-  hits.push(...fileHits);
-  return hits;
+  return out;
 }
 
-function matchPatterns(patterns, text) {
+/**
+ * binding.gyp "<!(cmd)" / "<!@(cmd)" expansions run commands when node-gyp configures the
+ * package, with no install script in package.json (Phantom Gyp). Common legit forms,
+ * node -p "require('node-addon-api').include", pkg-config and similar, are left alone;
+ * flagged are network fetches and other high-signal commands, and commands that run a
+ * script file (which is then inspected).
+ */
+const GYP_COMMAND_PATTERNS = [
+  { pattern: /\b(curl|wget|Invoke-WebRequest|iwr|Invoke-Expression|iex)\b/i, label: 'gyp-network-or-eval', severity: 'critical' },
+  { pattern: /\bpowershell\b[^\n]{0,200}\s-e(nc(oded(command)?)?)?\b/i, label: 'powershell-encoded', severity: 'critical' },
+  { pattern: /https?:\/\//, label: 'gyp-url', severity: 'high' },
+  { pattern: /base64\s+(-d|--decode)|\batob\s*\(|Buffer\.from\s*\(/, label: 'base64-decode', severity: 'high' },
+  { pattern: /(\/dev\/tcp\/|\bnc\b[^\n]{0,200}\s-e\b)/, label: 'reverse-shell', severity: 'critical' },
+];
+
+function gypCommands(text) {
+  const cmds = [];
+  const re = /<!@?\(/g;
+  let m;
+  while ((m = re.exec(text)) && cmds.length < 50) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    const start = i;
+    for (; i < text.length && i - start < 1000 && depth > 0; i++) {
+      if (text[i] === '(') depth++;
+      else if (text[i] === ')') depth--;
+    }
+    if (depth === 0) cmds.push(text.slice(start, i - 1));
+  }
+  return cmds;
+}
+
+function checkBindingGyp(pkgPath, pkgJson, pkgName, ctx) {
+  const gypPath = path.join(pkgPath, 'binding.gyp');
+  const text = timing.measure('binding_gyp', () => {
+    const st = statSafe(gypPath);
+    return st && st.isFile() ? readFileSafe(gypPath, { maxBytes: MAX_GYP_BYTES }) : null;
+  });
+  if (!text) return [];
   const matched = [];
-  for (const { pattern, label, severity } of patterns) {
-    if (pattern.test(text)) matched.push({ label, severity });
+  const files = [];
+  const commands = [];
+  const main = pkgJson && typeof pkgJson.main === 'string' ? path.resolve(pkgPath, pkgJson.main) : null;
+  for (const cmd of gypCommands(text)) {
+    const hits = matchPatterns(GYP_COMMAND_PATTERNS, cmd);
+    for (const ref of referencedScriptFiles(cmd, pkgPath)) {
+      const entry = ref.abs === main || /^index\.[cm]?js$/i.test(path.basename(ref.abs));
+      hits.push({ label: entry ? 'gyp-runs-package-entry' : 'gyp-runs-script', severity: entry ? 'high' : 'medium' });
+      const fileHits = timing.measure('read_script_files', () => inspectScriptFile(ref.abs, ref.rel));
+      hits.push(...fileHits);
+      files.push(ref.rel);
+    }
+    if (hits.length > 0) { matched.push(...hits); commands.push(cmd); }
   }
-  return matched;
+  if (matched.length === 0) return [];
+  const labels = [...new Set(matched.map(m => m.label))];
+  return [{
+    severity: worstSeverity(matched),
+    type: 'suspicious_lifecycle_script',
+    ecosystem: 'npm',
+    package: pkgName,
+    project: ctx.project,
+    hook: 'binding.gyp',
+    script: sanitizeExcerpt(commands.map(c => `<!(${c})`).join(' '), 500),
+    script_files: [...new Set(files)],
+    triggers: labels,
+    path: pkgPath,
+    text: `${pkgName} runs commands from binding.gyp at build time: ${labels.join(', ')}`,
+  }];
 }
 
-function worstSeverity(matched) {
-  const order = { critical: 0, high: 1, medium: 2, low: 3 };
-  return matched.reduce((worst, m) => ((order[m.severity] ?? 3) < (order[worst] ?? 3) ? m.severity : worst), 'low');
-}
-
-module.exports = { scan, SCANNER_ID, checkScripts };
+module.exports = { scan, SCANNER_ID, checkScripts, checkBindingGyp, remoteTarball, gypCommands };

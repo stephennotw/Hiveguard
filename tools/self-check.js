@@ -121,6 +121,10 @@ for (const [k, v] of count(au.providers || [], p => `${p.provider} (${p.source})
 add(`  AI SDKs in dependencies: ${(au.sdks || []).length}`);
 for (const sdk of (au.sdks || []).slice(0, 15)) add(`    ${sdk.ecosystem}:${sdk.name} in ${sdk.projects} project(s)`);
 
+const ps = (result.ecosystems && result.ecosystems.persistence) || {};
+add(`  autostart entries: ${ps.total || 0}${(ps.unreadable || []).length ? ` (not readable without elevation: ${ps.unreadable.join(', ')})` : ''}`);
+for (const [k, v] of count(ps.entries || [], x => `${x.kind}${x.command ? '' : ' (command not read)'}`)) add(`    ${String(v).padStart(4)} x ${k}`);
+
 add();
 add('Threat intel');
 const ti = result.threat_intel || {};
@@ -140,6 +144,9 @@ const describe = (f) => {
     case 'suspicious_git_hook': return `git hook "${f.hook}" (${f.origin || '.git/hooks'})`;
     case 'suspicious_ai_instruction': return `AI file ${f.tool}: ${path.basename(f.path || '')}`;
     case 'supply_chain_compromise': return `threat-intel match (${f.ecosystem})`;
+    case 'suspicious_autostart': return `autostart entry (${f.autostart_kind})`;
+    case 'known_ioc_file': return 'catalog persistence file present';
+    case 'remote_url_dependency': return `npm dependency from URL${f.dependency === 'resolved' ? ' (installed)' : ''}`;
     case 'known_cve': return `known CVE (${f.ecosystem}) ${f.cve || ''}`.trim();
     default: return f.ecosystem === 'secrets' ? `secrets hygiene: ${f.type}` : f.type;
   }

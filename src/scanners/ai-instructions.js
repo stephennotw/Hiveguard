@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { readFileSafe, readdirSafe, statSafe, findProjectDirs } = require('../utils/fs-safe');
 const logger = require('../utils/logger');
+const { referencedScriptFiles, inspectScriptFile, localImports } = require('../utils/script-inspect');
 const { scanHidden, sanitizeExcerpt } = require('../utils/text');
 const { stripJsonc, stripBom } = require('../utils/jsonc');
 const { inToolCatalog } = require('../utils/ai-roots');
@@ -208,12 +209,18 @@ function inspectFile(spec, filePath, project, trustedRoot, ctx, scope, namesOnly
   if (content == null) return;
 
   const extra = [];
-  if (spec.kind === 'claude-settings') extra.push(...inspectClaudeSettings(content, item, scope));
+  if (spec.kind === 'claude-settings') {
+    extra.push(...inspectClaudeSettings(content, item, scope));
+    extra.push(...commandScriptHits((item.hooks || []).map(h => h._raw), filePath, scope, item));
+    for (const h of item.hooks || []) delete h._raw;
+  }
   if (spec.kind === 'vscode-tasks') {
     const tasks = autorunTasks(content);
     if (tasks && tasks.length > 0) {
       item.autorun_tasks = tasks;
       extra.push({ label: 'autorun-on-folder-open', severity: 'medium' });
+      extra.push(...commandScriptHits(tasks.map(t => t._raw), filePath, scope, item));
+      for (const t of tasks) delete t._raw;
     } else {
       // Ordinary tasks.json is not an agent surface; unparseable ones are still pattern-checked.
       ctx.inventory.pop();
@@ -255,7 +262,7 @@ function inspectClaudeSettings(content, item, scope) {
   for (const [event, groups] of Object.entries((data && data.hooks) || {})) {
     for (const g of (Array.isArray(groups) ? groups : [])) {
       for (const h of ((g && g.hooks) || [])) {
-        if (h && typeof h.command === 'string') hooks.push({ event, command: sanitizeExcerpt(h.command, 200) });
+        if (h && typeof h.command === 'string') hooks.push({ event, command: sanitizeExcerpt(h.command, 200), _raw: h.command });
       }
     }
   }
@@ -277,7 +284,36 @@ function autorunTasks(content) {
   const tasks = (data && Array.isArray(data.tasks)) ? data.tasks : [];
   return tasks
     .filter(t => t && t.runOptions && t.runOptions.runOn === 'folderOpen')
-    .map(t => ({ label: sanitizeExcerpt(t.label || '', 100), command: sanitizeExcerpt([t.command, ...(Array.isArray(t.args) ? t.args : [])].filter(Boolean).join(' '), 300) }));
+    .map(t => {
+      const raw = [t.command, ...(Array.isArray(t.args) ? t.args : [])].filter(v => typeof v === 'string').join(' ');
+      return { label: sanitizeExcerpt(t.label || '', 100), command: sanitizeExcerpt(raw, 300), _raw: raw };
+    });
+}
+
+/**
+ * Script files run by agent hooks and auto-run tasks (e.g. "node .claude/setup.mjs"),
+ * plus their direct local imports, inspected like install-hook files. Paths resolve
+ * against the folder holding .claude/ or .vscode/ and must stay inside it.
+ */
+function commandScriptHits(commands, settingsPath, scope, item) {
+  const base = path.dirname(path.dirname(settingsPath));
+  const vars = scope === 'user' ? { '~/': base + path.sep, '$HOME': base, '${HOME}': base } : {};
+  const hits = [];
+  const files = [];
+  for (const raw of commands) {
+    if (typeof raw !== 'string') continue;
+    const cmd = raw.replace(/["']?\$\{?(CLAUDE_PROJECT_DIR|workspaceFolder)\}?["']?/g, base);
+    for (const ref of referencedScriptFiles(cmd, base, { vars })) {
+      files.push(ref.rel);
+      hits.push(...inspectScriptFile(ref.abs, ref.rel));
+      for (const imp of localImports(ref.abs, base)) {
+        files.push(imp.rel);
+        hits.push(...inspectScriptFile(imp.abs, imp.rel));
+      }
+    }
+  }
+  if (files.length > 0) item.script_files = [...new Set(files)];
+  return hits;
 }
 
 

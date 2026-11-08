@@ -10,8 +10,11 @@
   },
   "threat_matches": [],
   "findings": [
+    "critical known_ioc_file kim/.local/share/kitty/cat.py [known-persistence-file]",
+    "critical known_ioc_file kim/Library/LaunchAgents/com.user.kitty-monitor.plist [known-persistence-file]",
     "high suspicious_ai_instruction kim/.codex/AGENTS.md [jailbreak-persona]",
     "high suspicious_ai_instruction kim/shared/CLAUDE.md [prompt-injection]",
+    "high suspicious_autostart kim/Library/LaunchAgents/com.user.kitty-monitor.plist [script-in-hidden-or-temp-dir]",
     "high suspicious_git_hook kim/.githooks/post-merge [base64-decode]",
     "medium suspicious_ai_instruction kim/.claude/settings.json [permission-bypass-mode]",
     "medium suspicious_ai_instruction kim/projects/notes/CLAUDE.md [symlink-outside-project]",
