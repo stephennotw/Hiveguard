@@ -145,6 +145,8 @@ An instruction or configuration file read by an AI coding assistant (`tool`: Cla
 - agent hooks or VS Code tasks that run automatically when a project is opened, and the script files those run (`script_files`);
 - settings that turn off the agent's permission prompts.
 
+A permission-bypass flag such as `--dangerously-skip-permissions` mentioned in the user's **own** files (home folder: `~/.claude`, `~/.codex`, skills, …) is `medium`, because it is usually their notes on running an agent headless; in a repository's files it stays `high`.
+
 **What to do:** open the file (`path`) and read it, including what the hook or task runs. Files that came with a cloned repository deserve the most suspicion. Do not open such a project in an AI agent until it is clean.
 
 ### `suspicious_autostart`

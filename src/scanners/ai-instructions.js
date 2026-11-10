@@ -231,12 +231,24 @@ function inspectFile(spec, filePath, project, trustedRoot, ctx, scope, namesOnly
     }
   }
 
-  const hits = [...extra, ...checkText(content)];
+  const hits = [...extra, ...textHits(content, scope)];
   if (hits.length > 0) {
     const labels = [...new Set(hits.map(h => h.label))];
     ctx.findings.push(makeFinding(spec.tool, filePath, project, hits,
       `Suspicious AI instruction file for ${spec.tool} at ${filePath}: ${labels.join(', ')}`));
   }
+}
+
+// Mentioning a permission-bypass flag (--dangerously-skip-permissions, --yolo, …) is how
+// people document running an agent headless. In the user's own config that is usually
+// their notes, so it is medium; in files that arrive with a repository it stays high.
+// Script files that hooks actually run are judged separately and are not affected.
+const USER_LEVEL_SEVERITY = { 'ai-cli-permission-bypass': 'medium' };
+
+function textHits(content, scope) {
+  const hits = checkText(content);
+  if (scope !== 'user') return hits;
+  return hits.map(h => (USER_LEVEL_SEVERITY[h.label] ? { ...h, severity: USER_LEVEL_SEVERITY[h.label] } : h));
 }
 
 function checkText(content) {
