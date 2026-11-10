@@ -172,6 +172,8 @@ add('Diagnostics');
 const lcs = (result.ecosystems && result.ecosystems.lifecycle_scripts) || {};
 add(`  install scripts: ${lcs.projects_scanned || 0} project dirs, ${lcs.packages_scanned || 0} packages, ${lcs.links_resolved || 0} links resolved`);
 add(`    package.json reads: ${lcs.package_json_reads || 0}; via npm hidden lockfile: ${lcs.packages_via_hidden_lockfile || 0} packages (${lcs.hidden_lockfiles_used || 0} lockfiles); via pnpm build record: ${lcs.packages_via_pnpm_record || 0} packages (${lcs.pnpm_build_records_used || 0} records); via full walk: ${lcs.packages_via_walk || 0} packages (${lcs.pnpm_stores_walked || 0} pnpm stores)`);
+const fb = Object.entries(lcs.pnpm_record_fallbacks || {});
+if (fb.length) add(`    pnpm stores walked in full because: ${fb.map(([k, v]) => `${k} (${v})`).join(', ')}`);
 add(`    reads run ${lcs.read_concurrency || 1} at a time; read_package_json below is elapsed time for all of them`);
 if (lcs.timing_ms) add(`    time (ms): ${Object.entries(lcs.timing_ms).map(([k, v]) => `${k} ${v}`).join(', ')}`);
 const disc = (ecos.mcp_configs && ecos.mcp_configs.discovery) || {};

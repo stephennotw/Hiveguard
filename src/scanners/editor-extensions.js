@@ -14,15 +14,20 @@ const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 const RUN_HIGH = 32;
 const RUN_CRITICAL = 200;
+// Entry files are large bundles; on Windows most of a read is the antivirus scan, and
+// overlapping a few of them hides most of that wait.
+const READ_CONCURRENCY = 4;
 
 /**
- * Scan editor extensions for VS Code, Windsurf, Cursor, VSCodium.
- * Reads package.json from each extension directory.
+ * Scan editor extensions for VS Code, Windsurf, Cursor, VSCodium and other forks.
+ * Reads package.json from each extension directory, then checks the entry files
+ * (main / browser) in parallel for GlassWorm-style hidden code.
  */
-function scan(platform) {
+async function scan(platform) {
   const results = {};
   const findings = [];
   const budget = { bytes: MAX_TOTAL_BYTES, files: 0, skipped: 0, ms: 0 };
+  const entryQueue = [];
 
   for (const [editor, extDirOrDirs] of Object.entries(platform.editorExtensionDirs || {})) {
     const dirs = Array.isArray(extDirOrDirs) ? extDirOrDirs : [extDirOrDirs];
@@ -58,22 +63,8 @@ function scan(platform) {
           ...(listOf(pkgJson.extensionPack).length ? { extension_pack: listOf(pkgJson.extensionPack) } : {}),
           ...(listOf(pkgJson.extensionDependencies).length ? { extension_dependencies: listOf(pkgJson.extensionDependencies) } : {}),
         });
-        const hidden = checkEntryFile(extPath, pkgJson, budget);
-        if (hidden) {
-          const ext = extensions[extensions.length - 1];
-          ext.hidden_unicode_run = hidden.longest;
-          const id = `${ext.publisher}.${ext.name}`;
-          findings.push({
-            severity: hidden.longest >= RUN_CRITICAL ? 'critical' : 'high',
-            type: 'suspicious_extension',
-            ecosystem: 'editor-extension',
-            package: id,
-            version: ext.version,
-            editor,
-            path: path.join(extPath, hidden.file),
-            triggers: ['invisible-unicode-payload'],
-            text: `${editor} extension ${id}@${ext.version} hides ${hidden.total} invisible Unicode characters in ${hidden.file} (longest run ${hidden.longest}), the GlassWorm technique`,
-          });
+        for (const file of entryFiles(extPath, pkgJson, budget)) {
+          entryQueue.push({ ext: extensions[extensions.length - 1], editor, extPath, file });
         }
       }
     }
@@ -82,6 +73,30 @@ function scan(platform) {
       results[editor] = extensions;
       logger.info(SCANNER_ID, `${editor}: ${extensions.length} extensions`);
     }
+  }
+
+  const t0 = process.hrtime.bigint();
+  const hits = await checkEntryFiles(entryQueue);
+  budget.ms += Number(process.hrtime.bigint() - t0) / 1e6;
+  budget.files = entryQueue.length;
+  for (let i = 0; i < entryQueue.length; i++) {
+    const r = hits[i];
+    const { ext, editor, extPath, file } = entryQueue[i];
+    if (!r || r.longest < RUN_HIGH || ext.hidden_unicode_run) continue;
+    const rel = path.relative(extPath, file).split(path.sep).join('/');
+    ext.hidden_unicode_run = r.longest;
+    const id = `${ext.publisher}.${ext.name}`;
+    findings.push({
+      severity: r.longest >= RUN_CRITICAL ? 'critical' : 'high',
+      type: 'suspicious_extension',
+      ecosystem: 'editor-extension',
+      package: id,
+      version: ext.version,
+      editor,
+      path: file,
+      triggers: ['invisible-unicode-payload'],
+      text: `${editor} extension ${id}@${ext.version} hides ${r.total} invisible Unicode characters in ${rel} (longest run ${r.longest}), the GlassWorm technique`,
+    });
   }
 
   return {
@@ -97,29 +112,38 @@ function scan(platform) {
 
 const listOf = (v) => (Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, 100) : []);
 
-/** The extension's entry file (main / browser), read within budget and checked for hidden runs. */
-function checkEntryFile(extPath, pkgJson, budget) {
-  const t0 = process.hrtime.bigint();
-  try {
-    for (const entry of [pkgJson.main, pkgJson.browser].filter(e => typeof e === 'string')) {
-      const root = path.resolve(extPath);
-      let file = path.resolve(root, entry);
-      if (!file.startsWith(root + path.sep)) continue;
-      let st = statSafe(file);
-      if (!st || !st.isFile()) { file += '.js'; st = statSafe(file); }
-      if (!st || !st.isFile()) continue;
-      if (st.size > MAX_ENTRY_BYTES || st.size > budget.bytes) { budget.skipped++; continue; }
-      let buf;
-      try { buf = fs.readFileSync(file); } catch { continue; }
-      budget.bytes -= buf.length;
-      budget.files++;
-      const r = invisibleRuns(buf);
-      if (r.longest >= RUN_HIGH) return { ...r, file: path.relative(root, file).split(path.sep).join('/') };
-    }
-    return null;
-  } finally {
-    budget.ms += Number(process.hrtime.bigint() - t0) / 1e6;
+/** Entry files (main / browser) inside the extension, within the size budget. */
+function entryFiles(extPath, pkgJson, budget) {
+  const out = [];
+  const root = path.resolve(extPath);
+  for (const entry of [pkgJson.main, pkgJson.browser].filter(e => typeof e === 'string')) {
+    let file = path.resolve(root, entry);
+    if (!file.startsWith(root + path.sep)) continue;
+    let st = statSafe(file);
+    if (!st || !st.isFile()) { file += '.js'; st = statSafe(file); }
+    if (!st || !st.isFile() || out.includes(file)) continue;
+    if (st.size > MAX_ENTRY_BYTES || st.size > budget.bytes) { budget.skipped++; continue; }
+    budget.bytes -= st.size;
+    out.push(file);
   }
+  return out;
+}
+
+/** invisibleRuns() of each file, READ_CONCURRENCY at a time; null for unreadable files. */
+async function checkEntryFiles(queue) {
+  const results = new Array(queue.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < queue.length) {
+      const i = next++;
+      try {
+        const buf = await fs.promises.readFile(queue[i].file);
+        if (buf.length <= MAX_ENTRY_BYTES) results[i] = invisibleRuns(buf);
+      } catch { /* unreadable: skipped */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, queue.length) }, worker));
+  return results;
 }
 
 /**

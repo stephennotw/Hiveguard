@@ -36,7 +36,7 @@ async function scan(platform, opts = {}, npmProjects) {
   const findings = [];
   const stats = {
     packagesScanned: 0, linksResolved: 0, packageJsonReads: 0, hiddenLockfiles: 0, viaHidden: 0, viaWalk: 0,
-    pnpmStores: 0, pnpmRecords: 0, viaPnpmRecord: 0, seen: new Set(), queue: [],
+    pnpmStores: 0, pnpmRecords: 0, viaPnpmRecord: 0, pnpmFallbacks: {}, seen: new Set(), queue: [],
   };
   timing.reset();
   const pnpmOverrides = pnpmAllowAllConfigured(platform);
@@ -82,6 +82,7 @@ async function scan(platform, opts = {}, npmProjects) {
     pnpm_stores_walked: stats.pnpmStores,
     pnpm_build_records_used: stats.pnpmRecords,
     packages_via_pnpm_record: stats.viaPnpmRecord,
+    pnpm_record_fallbacks: stats.pnpmFallbacks,
     read_concurrency: READ_CONCURRENCY,
     // Where the time went, for diagnosing slow endpoints (milliseconds).
     timing_ms: timing.snapshot(),
@@ -125,7 +126,7 @@ function scanNodeModulesRoot(nmDir, ctx, realNm) {
       return;
     }
   }
-  if (!ctx.pnpmOverrides && scanFromPnpmRecord(nmDir, ctx)) return;
+  if (scanFromPnpmRecord(nmDir, ctx)) return;
   scanNodeModules(nmDir, ctx, 0, realNm);
 }
 
@@ -161,21 +162,39 @@ function scanFromHiddenLockfile(packages, baseDir, ctx) {
  */
 const MAX_PNPM_RECORD_BYTES = 8 * 1024 * 1024;
 
+// Why a pnpm store was walked in full instead of using the build record (diagnostics only).
+function pnpmFallback(ctx, reason) {
+  const f = ctx.stats.pnpmFallbacks;
+  f[reason] = (f[reason] || 0) + 1;
+  return false;
+}
+
 function scanFromPnpmRecord(nmDir, ctx) {
   const recordPath = path.join(nmDir, '.modules.yaml');
   const st = statSafe(recordPath);
-  if (!st || !st.isFile() || st.size > MAX_PNPM_RECORD_BYTES) return false;
+  if (!st || !st.isFile()) {
+    const store = statSafe(path.join(nmDir, '.pnpm'));
+    return store && store.isDirectory() ? pnpmFallback(ctx, 'no build record') : false;
+  }
+  if (st.size > MAX_PNPM_RECORD_BYTES) return pnpmFallback(ctx, 'record too large');
+  if (ctx.pnpmOverrides) return pnpmFallback(ctx, 'allow-all builds in user config');
   const nmStat = statSafe(nmDir);
-  if (!nmStat || st.mtimeMs + 1000 < nmStat.mtimeMs) return false;
+  if (!nmStat || st.mtimeMs + 1000 < nmStat.mtimeMs) return pnpmFallback(ctx, 'record older than node_modules');
+  const text = readFileSafe(recordPath, { maxBytes: MAX_PNPM_RECORD_BYTES }) || '';
   let record;
-  try { record = JSON.parse(readFileSafe(recordPath, { maxBytes: MAX_PNPM_RECORD_BYTES }) || ''); } catch { return false; }
+  try { record = JSON.parse(text); } catch {
+    // pnpm 9 and older write YAML here, without a build record
+    const v = text.match(/^packageManager:\s*['"]?pnpm@(\d+)/m);
+    return pnpmFallback(ctx, v ? `pnpm ${v[1]} (record needs pnpm 10+)` : 'record unreadable');
+  }
   const major = parseInt((String(record && record.packageManager || '').match(/^pnpm@(\d+)/) || [])[1], 10);
-  if (!(major >= 10) || !Array.isArray(record.ignoredBuilds)) return false;
-  if ((record.nodeLinker && record.nodeLinker !== 'isolated') || (record.virtualStoreDir && record.virtualStoreDir !== '.pnpm')) return false;
+  if (!(major >= 10)) return pnpmFallback(ctx, Number.isFinite(major) ? `pnpm ${major} (record needs pnpm 10+)` : 'pnpm version unknown');
+  if (!Array.isArray(record.ignoredBuilds)) return pnpmFallback(ctx, 'no ignoredBuilds in record');
+  if ((record.nodeLinker && record.nodeLinker !== 'isolated') || (record.virtualStoreDir && record.virtualStoreDir !== '.pnpm')) return pnpmFallback(ctx, 'non-default pnpm layout');
 
   const projectDir = path.dirname(nmDir);
   const allowed = pnpmAllowedBuilds(projectDir);
-  if (allowed == null) return false; // allow-all configured for this project
+  if (allowed == null) return pnpmFallback(ctx, 'allow-all builds in project config');
 
   const storeDir = path.join(nmDir, '.pnpm');
   const entries = readDirEntries(storeDir).filter(e => e.isDirectory() && e.name !== 'node_modules');
@@ -187,7 +206,7 @@ function scanFromPnpmRecord(nmDir, ctx) {
     const name = spec.slice(0, at);
     const prefix = storeName(spec);
     const hits = entries.filter(e => e.name === prefix || e.name.startsWith(prefix + '_') || e.name.startsWith(prefix + '('));
-    if (hits.length === 0) return false; // e.g. a hashed long name: walk instead
+    if (hits.length === 0) return pnpmFallback(ctx, 'recorded package not found'); // e.g. a hashed long name
     for (const e of hits) queued.push({ pkgPath: path.join(storeDir, e.name, 'node_modules', ...name.split('/')), name });
   }
   for (const name of allowed) {

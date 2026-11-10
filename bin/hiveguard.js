@@ -364,7 +364,9 @@ async function main() {
     platform.editorExtensionDirs[label] = [...(platform.editorExtensionDirs[label] || []), ...fresh];
     discoveredEditors.push(label);
   }
-  scanResults.editor_extensions = timedScan('editor-ext', () => editorExtScanner.scan(platform));
+  t0 = Date.now();
+  scanResults.editor_extensions = await editorExtScanner.scan(platform);
+  logger.info('core', `  editor-ext: ${Date.now() - t0}ms`);
   scanResults.editor_extensions.discovered_editors = discoveredEditors;
   scanResults.browser_extensions = timedScan('browser-ext', () => browserExtScanner.scan(platform));
   const mcpDiscovery = {};

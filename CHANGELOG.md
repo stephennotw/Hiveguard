@@ -6,6 +6,8 @@
 
 - Install-script scan is much faster on pnpm 10+ projects: only the packages pnpm recorded as having install scripts (`node_modules/.modules.yaml` `ignoredBuilds` plus the allowed builds) are read, instead of every package in the store. Falls back to the full walk for older pnpm, stale records or "allow all builds". URL dependencies are taken from pnpm's lockfile copy on this path.
 - The `package.json` files that still need reading are read 8 at a time instead of one by one.
+- Editor-extension entry files (GlassWorm check) are read 4 at a time.
+- Diagnostics say why a pnpm store was walked in full (`pnpm_record_fallbacks`, also shown by the self-check).
 
 ## 2.0.0 (2026-11-08)
 

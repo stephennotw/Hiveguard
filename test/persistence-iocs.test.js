@@ -134,7 +134,7 @@ test('URL dependencies: registry tarballs and git hosts pass, other URLs are fla
   assert.deepStrictEqual(remoteTarball('https://203.0.113.5/p.tgz'), { host: '203.0.113.5', plaintext: false, ip: true });
 });
 
-test('extensions: long invisible-Unicode runs are found, emoji selectors are not', () => {
+test('extensions: long invisible-Unicode runs are found, emoji selectors are not', async () => {
   const { invisibleRuns, scan: scanExt } = require('../src/scanners/editor-extensions');
   const vs = (n) => String.fromCodePoint(...Array.from({ length: n }, (_, i) => 0xE0100 + (i % 200)));
   assert.strictEqual(invisibleRuns(Buffer.from('const heart = "❤️"; // ok ☺️')).longest, 1);
@@ -152,7 +152,7 @@ test('extensions: long invisible-Unicode runs are found, emoji selectors are not
     };
     mk('good.theme-1.0.0', './out/extension', 'module.exports = {}; // ❤️', { extensionPack: ['a.b', 'c.d'] });
     mk('evil.tool-1.0.0', 'extension.js', `const s = "${vs(250)}";`);
-    const r = scanExt({ editorExtensionDirs: { vscode: [dir] } });
+    const r = await scanExt({ editorExtensionDirs: { vscode: [dir] } });
     assert.deepStrictEqual(r.findings.map(f => [f.package, f.severity]), [['evil.tool', 'critical']]);
     assert.deepStrictEqual(r.editors.vscode.find(e => e.publisher === 'good').extension_pack, ['a.b', 'c.d']);
     assert.strictEqual(r.entry_files_checked, 2);

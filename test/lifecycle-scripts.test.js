@@ -325,19 +325,20 @@ describe('lifecycle-scripts pnpm 10 build record', () => {
     assert.deepEqual(r.findings.filter(f => f.type === 'remote_url_dependency').map(f => [f.package, f.url]), [['evil-pad', 'http://203.0.113.5/evil.tgz']]);
   });
 
-  for (const [label, setup] of [
-    ['allow-all builds in pnpm-workspace.yaml', (proj) => fs.writeFileSync(path.join(proj, 'pnpm-workspace.yaml'), 'dangerouslyAllowAllBuilds: true\n')],
-    ['allow-all builds in package.json', (proj) => pkg(proj, { name: 'p', pnpm: { dangerouslyAllowAllBuilds: true } })],
-    ['allow-all builds in the project .npmrc', (proj) => fs.writeFileSync(path.join(proj, '.npmrc'), 'dangerously-allow-all-builds=true\n')],
-    ['a record older than node_modules', (proj) => { const old = new Date(Date.now() - 3600 * 1000); fs.utimesSync(path.join(proj, 'node_modules', '.modules.yaml'), old, old); }],
-    ['a pnpm 9 record (YAML)', (proj) => fs.writeFileSync(path.join(proj, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\npackageManager: pnpm@9.15.0\n')],
-    ['a recorded package that cannot be located', (proj) => fs.writeFileSync(path.join(proj, 'node_modules', '.modules.yaml'), JSON.stringify({ packageManager: 'pnpm@10.1.0', ignoredBuilds: ['missing@9.9.9'] }))],
+  for (const [label, reason, setup] of [
+    ['allow-all builds in pnpm-workspace.yaml', 'allow-all builds in project config', (proj) => fs.writeFileSync(path.join(proj, 'pnpm-workspace.yaml'), 'dangerouslyAllowAllBuilds: true\n')],
+    ['allow-all builds in package.json', 'allow-all builds in project config', (proj) => pkg(proj, { name: 'p', pnpm: { dangerouslyAllowAllBuilds: true } })],
+    ['allow-all builds in the project .npmrc', 'allow-all builds in project config', (proj) => fs.writeFileSync(path.join(proj, '.npmrc'), 'dangerously-allow-all-builds=true\n')],
+    ['a record older than node_modules', 'record older than node_modules', (proj) => { const old = new Date(Date.now() - 3600 * 1000); fs.utimesSync(path.join(proj, 'node_modules', '.modules.yaml'), old, old); }],
+    ['a pnpm 9 record (YAML)', 'pnpm 9 (record needs pnpm 10+)', (proj) => fs.writeFileSync(path.join(proj, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\npackageManager: pnpm@9.15.0\n')],
+    ['a recorded package that cannot be located', 'recorded package not found', (proj) => fs.writeFileSync(path.join(proj, 'node_modules', '.modules.yaml'), JSON.stringify({ packageManager: 'pnpm@10.1.0', ignoredBuilds: ['missing@9.9.9'] }))],
   ]) {
     it(`walks the whole store for ${label}`, async () => {
       const proj = project();
       setup(proj);
       const r = await run(proj);
       assert.equal(r.pnpm_build_records_used, 0);
+      assert.deepEqual(r.pnpm_record_fallbacks, { [reason]: 1 });
       assert.ok(names(r).includes('unrecorded'), names(r).join(','));
     });
   }
@@ -349,6 +350,7 @@ describe('lifecycle-scripts pnpm 10 build record', () => {
     fs.writeFileSync(path.join(home, 'AppData', 'Local', 'pnpm', 'config', 'rc'), 'dangerously-allow-all-builds=true\n');
     const r = await run(proj, { userHomes: [home] });
     assert.equal(r.pnpm_build_records_used, 0);
+    assert.deepEqual(r.pnpm_record_fallbacks, { 'allow-all builds in user config': 1 });
     assert.ok(names(r).includes('unrecorded'));
   });
 });
