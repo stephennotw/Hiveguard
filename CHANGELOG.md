@@ -1,17 +1,6 @@
 # Changelog
 
-## Unreleased
-
-### Changed
-
-- Install-script scan is much faster on pnpm 10+ projects: only the packages pnpm recorded as having install scripts (`node_modules/.modules.yaml` `ignoredBuilds` plus the allowed builds) are read, instead of every package in the store. Falls back to the full walk for older pnpm, stale records or "allow all builds". URL dependencies are taken from pnpm's lockfile copy on this path.
-- The `package.json` files that still need reading are read 8 at a time instead of one by one.
-- Editor-extension entry files (GlassWorm check) are read 4 at a time.
-- AI instruction files: a permission-bypass flag (`--dangerously-skip-permissions`, `--yolo`, `--trust-all-tools`) mentioned in the user's own files is medium instead of high; repository files stay high.
-- AI instruction files in a home folder that also looks like a project (a `package.json` or `.git` in `~`) are treated as the user's own files, not repository files; previously `~/.claude` skills and hooks there could be judged as if they came with a cloned repository.
-- Diagnostics say why a pnpm store was walked in full (`pnpm_record_fallbacks`, also shown by the self-check).
-
-## 2.0.0 (2026-11-08)
+## 2.0.0 (2026-11-10)
 
 A major release. Full description and upgrade notes: [docs/WHATS-NEW-2.0.md](docs/WHATS-NEW-2.0.md). Output is backward compatible: everything new is additive.
 
@@ -32,12 +21,18 @@ A major release. Full description and upgrade notes: [docs/WHATS-NEW-2.0.md](doc
 - `tools/self-check.js`: a shareable summary of a real scan.
 - 200+ tests, five synthetic machines, opt-in CI on Windows, macOS and Linux.
 
+### Performance
+
+- Install-script scan reads only the packages the package manager recorded as having install scripts: npm's `node_modules/.package-lock.json` and pnpm 10+'s `node_modules/.modules.yaml` (with a full walk as fallback; the reason is reported in `pnpm_record_fallbacks`).
+- Files that must be read are read in parallel (8 `package.json` files, 4 extension entry files at a time), which hides most of Windows Defender's per-file scan time. On a real Windows developer profile a scan went from 64 s to 14–23 s.
+
 ### Changed
 
 - Runs at below-normal CPU priority by default.
 - Files in cloud-sync folders (OneDrive, Dropbox, Google Drive, iCloud) are listed but never read.
 - Critical or high findings from the new checks can set exit code 1.
 - Supply-chain findings include `location` (the lockfile).
+- A permission-bypass flag (`--dangerously-skip-permissions`, `--yolo`, `--trust-all-tools`) mentioned in the user's own AI files is medium; in repository files it is high.
 
 ### Fixed
 

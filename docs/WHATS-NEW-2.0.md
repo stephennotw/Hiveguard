@@ -29,6 +29,7 @@ This page covers:
 | Output | JSON + HTML | + SARIF, CycloneDX SBOM, NDJSON for SIEMs |
 | Incident response | none | `--ioc` search: "is this package / file / domain on the machine?" |
 | Testing | none | 200+ automated tests, five synthetic machines, CI on Windows, macOS and Linux |
+| Speed on Windows | every file opened in turn | only packages with install scripts are read (npm, pnpm 10+); remaining reads run in parallel |
 
 ---
 
