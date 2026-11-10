@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Install-script scan is much faster on pnpm 10+ projects: only the packages pnpm recorded as having install scripts (`node_modules/.modules.yaml` `ignoredBuilds` plus the allowed builds) are read, instead of every package in the store. Falls back to the full walk for older pnpm, stale records or "allow all builds". URL dependencies are taken from pnpm's lockfile copy on this path.
+- The `package.json` files that still need reading are read 8 at a time instead of one by one.
+
 ## 2.0.0 (2026-11-08)
 
 A major release. Full description and upgrade notes: [docs/WHATS-NEW-2.0.md](docs/WHATS-NEW-2.0.md). Output is backward compatible: everything new is additive.

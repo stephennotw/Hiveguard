@@ -23,11 +23,23 @@ const MAX_SCRIPT_CHARS = 4096;
 const MAX_GYP_BYTES = 256 * 1024;
 const MAX_NESTING = 6;
 
-function scan(platform, opts = {}, npmProjects) {
+// package.json files read at the same time. On Windows most of a read is the antivirus scan
+// of the opened file, and those scans overlap; 8 keeps the burst small.
+const READ_CONCURRENCY = 8;
+
+/**
+ * Two phases: a synchronous walk decides which package folders to check (cheap: directory
+ * listings only), then their package.json files are read in parallel and checked.
+ */
+async function scan(platform, opts = {}, npmProjects) {
   const projects = npmProjects || [];
   const findings = [];
-  const stats = { packagesScanned: 0, linksResolved: 0, packageJsonReads: 0, hiddenLockfiles: 0, viaHidden: 0, viaWalk: 0, pnpmStores: 0, seen: new Set() };
+  const stats = {
+    packagesScanned: 0, linksResolved: 0, packageJsonReads: 0, hiddenLockfiles: 0, viaHidden: 0, viaWalk: 0,
+    pnpmStores: 0, pnpmRecords: 0, viaPnpmRecord: 0, seen: new Set(), queue: [],
+  };
   timing.reset();
+  const pnpmOverrides = pnpmAllowAllConfigured(platform);
 
   for (const proj of projects) {
     const projectDir = proj.project_path;
@@ -40,13 +52,17 @@ function scan(platform, opts = {}, npmProjects) {
     }
     if (projPkgJson) findings.push(...urlDependencies(projPkgJson, projPkgJson.name || path.basename(projectDir), project, projectDir, true));
     const root = realpathOr(projectDir);
-    scanNodeModulesRoot(path.join(projectDir, 'node_modules'), { project, root, findings, stats }, path.join(root, 'node_modules'));
+    scanNodeModulesRoot(path.join(projectDir, 'node_modules'), { project, root, findings, stats, pnpmOverrides }, path.join(root, 'node_modules'));
   }
 
   for (const nmDir of globalNodeModulesDirs(platform)) {
     const root = realpathOr(nmDir);
-    scanNodeModulesRoot(nmDir, { project: '(global)', root, findings, stats }, root);
+    scanNodeModulesRoot(nmDir, { project: '(global)', root, findings, stats, pnpmOverrides }, root);
   }
+
+  const t0 = process.hrtime.bigint();
+  await processQueue(stats.queue, findings, stats);
+  timing.totals.read_package_json += Number(process.hrtime.bigint() - t0) / 1e6;
 
   if (findings.length > 0) {
     logger.warn(SCANNER_ID, `Found ${findings.length} suspicious lifecycle scripts in ${stats.packagesScanned} packages`);
@@ -64,6 +80,9 @@ function scan(platform, opts = {}, npmProjects) {
     packages_via_hidden_lockfile: stats.viaHidden,
     packages_via_walk: stats.viaWalk,
     pnpm_stores_walked: stats.pnpmStores,
+    pnpm_build_records_used: stats.pnpmRecords,
+    packages_via_pnpm_record: stats.viaPnpmRecord,
+    read_concurrency: READ_CONCURRENCY,
     // Where the time went, for diagnosing slow endpoints (milliseconds).
     timing_ms: timing.snapshot(),
     total_findings: findings.length,
@@ -106,6 +125,7 @@ function scanNodeModulesRoot(nmDir, ctx, realNm) {
       return;
     }
   }
+  if (!ctx.pnpmOverrides && scanFromPnpmRecord(nmDir, ctx)) return;
   scanNodeModules(nmDir, ctx, 0, realNm);
 }
 
@@ -123,15 +143,166 @@ function scanFromHiddenLockfile(packages, baseDir, ctx) {
     const remote = remoteTarball(info.resolved);
     if (remote) ctx.findings.push(urlFinding(name, ctx.project, pkgPath, 'resolved', info.resolved, remote));
     if (!info.hasInstallScript) continue;
-    const pkgJson = readPackageJson(pkgPath, ctx);
-    if (pkgJson && pkgJson.scripts) ctx.findings.push(...checkScripts(pkgJson.scripts, pkgJson.name || name, ctx.project, pkgPath));
-    ctx.findings.push(...checkBindingGyp(pkgPath, pkgJson, pkgJson && pkgJson.name || name, ctx));
+    ctx.stats.queue.push({ pkgPath, name, project: ctx.project, urlDeps: false });
   }
 }
 
-function readPackageJson(pkgDir, ctx) {
-  ctx.stats.packageJsonReads++;
-  return timing.measure('read_package_json', () => readJsonSafe(path.join(pkgDir, 'package.json'), { maxBytes: MAX_PACKAGE_JSON_BYTES }));
+/**
+ * pnpm 10+ blocks dependency install scripts unless allowed, and records the packages it
+ * blocked in node_modules/.modules.yaml ("ignoredBuilds"; JSON despite the name). Together
+ * with the allowed list (onlyBuiltDependencies in package.json or pnpm-workspace.yaml) that
+ * is every package with an install script or binding.gyp, so only those are read instead of
+ * every package in the .pnpm store. Like npm's hidden lockfile it is written locally by the
+ * package manager, not shipped by the repository.
+ *
+ * Not used (full walk instead) when the record is missing, older than node_modules, from
+ * pnpm < 10 or another layout, when "allow all builds" / neverBuiltDependencies is set, or
+ * when a recorded package cannot be located.
+ */
+const MAX_PNPM_RECORD_BYTES = 8 * 1024 * 1024;
+
+function scanFromPnpmRecord(nmDir, ctx) {
+  const recordPath = path.join(nmDir, '.modules.yaml');
+  const st = statSafe(recordPath);
+  if (!st || !st.isFile() || st.size > MAX_PNPM_RECORD_BYTES) return false;
+  const nmStat = statSafe(nmDir);
+  if (!nmStat || st.mtimeMs + 1000 < nmStat.mtimeMs) return false;
+  let record;
+  try { record = JSON.parse(readFileSafe(recordPath, { maxBytes: MAX_PNPM_RECORD_BYTES }) || ''); } catch { return false; }
+  const major = parseInt((String(record && record.packageManager || '').match(/^pnpm@(\d+)/) || [])[1], 10);
+  if (!(major >= 10) || !Array.isArray(record.ignoredBuilds)) return false;
+  if ((record.nodeLinker && record.nodeLinker !== 'isolated') || (record.virtualStoreDir && record.virtualStoreDir !== '.pnpm')) return false;
+
+  const projectDir = path.dirname(nmDir);
+  const allowed = pnpmAllowedBuilds(projectDir);
+  if (allowed == null) return false; // allow-all configured for this project
+
+  const storeDir = path.join(nmDir, '.pnpm');
+  const entries = readDirEntries(storeDir).filter(e => e.isDirectory() && e.name !== 'node_modules');
+  const storeName = (name) => name.replace(/\//g, '+');
+  const queued = [];
+  for (const spec of record.ignoredBuilds) {
+    const at = String(spec).lastIndexOf('@');
+    if (at <= 0) return false;
+    const name = spec.slice(0, at);
+    const prefix = storeName(spec);
+    const hits = entries.filter(e => e.name === prefix || e.name.startsWith(prefix + '_') || e.name.startsWith(prefix + '('));
+    if (hits.length === 0) return false; // e.g. a hashed long name: walk instead
+    for (const e of hits) queued.push({ pkgPath: path.join(storeDir, e.name, 'node_modules', ...name.split('/')), name });
+  }
+  for (const name of allowed) {
+    const prefix = storeName(name) + '@';
+    for (const e of entries.filter(x => x.name.startsWith(prefix))) {
+      queued.push({ pkgPath: path.join(storeDir, e.name, 'node_modules', ...name.split('/')), name });
+    }
+  }
+
+  ctx.stats.pnpmRecords++;
+  ctx.stats.packagesScanned += entries.length;
+  for (const q of queued) {
+    if (ctx.stats.seen.has(q.pkgPath)) continue;
+    ctx.stats.seen.add(q.pkgPath);
+    ctx.stats.viaPnpmRecord++;
+    ctx.stats.queue.push({ ...q, project: ctx.project, urlDeps: false });
+  }
+  // Dependencies fetched from a URL (not read from package.json on this path)
+  const lock = readFileSafe(path.join(storeDir, 'lock.yaml'), { maxBytes: 64 * 1024 * 1024, skipLarger: true });
+  for (const m of (lock || '').matchAll(/^ {2}'?([^\s'][^\n]*?)'?:\s*\n\s+resolution:\s*\{[^}\n]*\btarball:\s*([^,}\s]+)/gm)) {
+    const info = remoteTarball(m[2]);
+    if (!info) continue;
+    const key = m[1];
+    const name = key.slice(0, key.indexOf('@', 1)) || key;
+    ctx.findings.push(urlFinding(name, ctx.project, storeDir, 'resolved', m[2], info));
+  }
+  return true;
+}
+
+// Names pnpm is allowed to build for this project, or null when all builds are allowed.
+function pnpmAllowedBuilds(projectDir) {
+  const names = new Set();
+  const pkg = readJsonSafe(path.join(projectDir, 'package.json'), { maxBytes: MAX_PACKAGE_JSON_BYTES });
+  const cfg = (pkg && pkg.pnpm) || {};
+  if (cfg.dangerouslyAllowAllBuilds === true || cfg.neverBuiltDependencies) return null;
+  for (const n of Array.isArray(cfg.onlyBuiltDependencies) ? cfg.onlyBuiltDependencies : []) if (typeof n === 'string') names.add(n);
+  for (const [n, v] of Object.entries(cfg.allowBuilds || {})) if (v === true) names.add(n);
+
+  const ws = readFileSafe(path.join(projectDir, 'pnpm-workspace.yaml'), { maxBytes: 1024 * 1024 });
+  if (ws) {
+    if (/^dangerouslyAllowAllBuilds:\s*true\b/m.test(ws) || /^neverBuiltDependencies:/m.test(ws)) return null;
+    let section = null;
+    for (const line of ws.split(/\r?\n/)) {
+      if (/^\S/.test(line)) { section = (line.match(/^(onlyBuiltDependencies|allowBuilds):/) || [])[1] || null; continue; }
+      if (section === 'onlyBuiltDependencies') {
+        const m = line.match(/^\s+-\s+['"]?([^'"\s#]+)/);
+        if (m) names.add(m[1]);
+      } else if (section === 'allowBuilds') {
+        const m = line.match(/^\s+['"]?([^'":\s#]+)['"]?\s*:\s*true\b/);
+        if (m) names.add(m[1]);
+      }
+    }
+  }
+  const rc = readFileSafe(path.join(projectDir, '.npmrc'), { maxBytes: 256 * 1024 });
+  if (rc && /^\s*(dangerously-allow-all-builds\s*=\s*true|never-built-dependencies\s*=)/m.test(rc)) return null;
+  return names;
+}
+
+// "Allow all builds" set in a user's global npm/pnpm config disables the pnpm shortcut.
+function pnpmAllowAllConfigured(platform) {
+  for (const home of platform.userHomes || []) {
+    for (const rel of [['.npmrc'], ['AppData', 'Local', 'pnpm', 'config', 'rc'], ['.config', 'pnpm', 'rc'], ['Library', 'Preferences', 'pnpm', 'rc']]) {
+      const text = readFileSafe(path.join(home, ...rel), { maxBytes: 256 * 1024 });
+      if (text && /^\s*(dangerously-allow-all-builds\s*=\s*true|never-built-dependencies\s*=)/m.test(text)) return true;
+    }
+  }
+  return false;
+}
+
+/** Reads each queued package.json (READ_CONCURRENCY at a time) and runs the checks in queue order. */
+async function processQueue(queue, findings, stats) {
+  const results = new Array(queue.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < queue.length) {
+      const i = next++;
+      const item = queue[i];
+      const [pkgJson, hasGyp] = await Promise.all([
+        readJsonAsync(path.join(item.pkgPath, 'package.json')),
+        isFileAsync(path.join(item.pkgPath, 'binding.gyp')),
+      ]);
+      results[i] = { pkgJson, hasGyp };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, queue.length) }, worker));
+  stats.packageJsonReads += queue.length;
+
+  for (let i = 0; i < queue.length; i++) {
+    const { pkgPath, name, project, urlDeps } = queue[i];
+    const { pkgJson, hasGyp } = results[i];
+    const pkgName = (pkgJson && pkgJson.name) || name;
+    if (pkgJson && pkgJson.scripts) findings.push(...checkScripts(pkgJson.scripts, pkgName, project, pkgPath));
+    if (pkgJson && urlDeps) findings.push(...urlDependencies(pkgJson, pkgName, project, pkgPath, false));
+    if (hasGyp) findings.push(...checkBindingGyp(pkgPath, pkgJson, pkgName, { project }));
+  }
+}
+
+// readJsonSafe semantics (regular files only, size cap, null on any error), asynchronously.
+async function readJsonAsync(file) {
+  let fh;
+  try {
+    fh = await fs.promises.open(file, 'r');
+    const st = await fh.stat();
+    if (!st.isFile() || st.size > MAX_PACKAGE_JSON_BYTES) return null;
+    const text = (await fh.readFile({ encoding: 'utf8' }));
+    return JSON.parse(text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text);
+  } catch {
+    return null;
+  } finally {
+    if (fh) await fh.close().catch(() => {});
+  }
+}
+
+async function isFileAsync(file) {
+  try { return (await fs.promises.stat(file)).isFile(); } catch { return false; }
 }
 
 /**
@@ -180,12 +351,7 @@ function scanPackageDir(pkgPath, dirent, pkgName, ctx, depth, realGuess) {
 
   ctx.stats.packagesScanned++;
   ctx.stats.viaWalk++;
-  const pkgJson = readPackageJson(pkgPath, ctx);
-  if (pkgJson && pkgJson.scripts) {
-    ctx.findings.push(...checkScripts(pkgJson.scripts, pkgJson.name || pkgName, ctx.project, pkgPath));
-  }
-  if (pkgJson) ctx.findings.push(...urlDependencies(pkgJson, pkgJson.name || pkgName, ctx.project, pkgPath, false));
-  ctx.findings.push(...checkBindingGyp(pkgPath, pkgJson, (pkgJson && pkgJson.name) || pkgName, ctx));
+  ctx.stats.queue.push({ pkgPath, name: pkgName, project: ctx.project, urlDeps: true });
   scanNodeModules(path.join(pkgPath, 'node_modules'), ctx, depth + 1, path.join(r.real, 'node_modules'));
 }
 

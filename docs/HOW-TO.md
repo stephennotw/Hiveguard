@@ -313,6 +313,6 @@ Add an entry with the paths where the app installs on each OS (`windows`, `darwi
 | Report says threat intel **baseline** although you are online | GitHub could not be reached. Check proxy settings (`HTTPS_PROXY`); the console shows the error. The bundled catalogs were used instead |
 | A threat-intel source shows **failed** or **partial** | That source could not be fully queried, so matches may be incomplete. The console and `threat_intel.sources` show why. Rerun when the network is available |
 | Very few components on a developer machine | HiveGuard could not read the user profiles. Run as Administrator / root, or check `meta.users_scanned` |
-| Scan is slow | Run with `--verbose` to see per-scanner timings. Large `node_modules` trees (especially pnpm stores) take the longest on Windows because of antivirus file scanning |
+| Scan is slow | Run with `--verbose` (or the self-check) to see per-scanner timings. The install-script check is usually the largest: on Windows every opened file is scanned by antivirus. npm projects and pnpm 10+ projects are fast because HiveGuard reads only the packages the package manager recorded as having install scripts; Yarn, older pnpm and projects with "allow all builds" are read in full (8 files at a time) |
 | `--json` output looks mixed with log lines | Logs go to standard error and the JSON to standard output. Redirect only standard output: `run.bat --json > result.json` |
 | Exit code `3` | HiveGuard or the launcher could not run. The last console lines say why (for example the output folder could not be created) |

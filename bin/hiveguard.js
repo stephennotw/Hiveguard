@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
+// Parallel file reads (install-script scan) run on libuv's thread pool, 4 threads by
+// default. Must be set before the pool is first used.
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '8';
+
 /**
  * HiveGuard — Cross-platform endpoint supply chain scanner
  * 
@@ -381,7 +385,9 @@ async function main() {
       lifecycleProjects.push({ project: path.basename(d.dir), project_path: d.dir });
     }
   }
-  scanResults.lifecycle_scripts = timedScan('lifecycle', () => lifecycleScanner.scan(platform, scanOpts, lifecycleProjects));
+  t0 = Date.now();
+  scanResults.lifecycle_scripts = await lifecycleScanner.scan(platform, scanOpts, lifecycleProjects);
+  logger.info('core', `  lifecycle: ${Date.now() - t0}ms`);
   scanResults.git_hooks = timedScan('git-hooks', () => gitHooksScanner.scan(platform, scanOpts, projectDirs));
   scanResults.ai_instructions = timedScan('ai-instruct', () => aiInstructionsScanner.scan(platform, scanOpts, projectDirs));
   scanResults.ai_models = timedScan('ai-models', () => aiModelsScanner.scan(platform, scanOpts, modelCandidates));
