@@ -101,7 +101,22 @@ function scanGlobal(platform) {
     const { readdirSafe } = require('../utils/fs-safe');
     const nmDir = path.join(globalDir, 'node_modules');
     for (const entry of readdirSafe(nmDir)) {
-      if (entry.startsWith('.') || entry.startsWith('@')) continue;
+      if (entry.startsWith('.')) continue;
+      if (entry.startsWith('@')) {
+        // Scoped packages: read each sub-entry under the scope directory
+        const scopeDir = path.join(nmDir, entry);
+        for (const scopedEntry of readdirSafe(scopeDir)) {
+          if (scopedEntry.startsWith('.')) continue;
+          const scopedName = `${entry}/${scopedEntry}`;
+          const epkg = readJsonSafe(path.join(scopeDir, scopedEntry, 'package.json'));
+          if (epkg && epkg.version) {
+            if (!results.find(r => r.name === (epkg.name || scopedName))) {
+              results.push({ name: epkg.name || scopedName, version: epkg.version, global: true });
+            }
+          }
+        }
+        continue;
+      }
       const epkg = readJsonSafe(path.join(nmDir, entry, 'package.json'));
       if (epkg && epkg.version) {
         if (!results.find(r => r.name === epkg.name)) {

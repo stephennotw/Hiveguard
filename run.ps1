@@ -6,6 +6,10 @@
 #>
 
 $ErrorActionPreference = 'Stop'
+
+# Bootstrap messages go to stderr: Write-Host reaches stdout when output is redirected,
+# which would corrupt --json output.
+function Write-Log([string]$Message = '') { [Console]::Error.WriteLine($Message) }
 $HiveGuardArgs = $args
 
 # Pre-create output directory if --output is specified
@@ -14,7 +18,7 @@ for ($i = 0; $i -lt $HiveGuardArgs.Count; $i++) {
         $outDir = $HiveGuardArgs[$i + 1]
         if (-not (Test-Path $outDir)) {
             New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-            Write-Host "[bootstrap] Created output directory: $outDir" -ForegroundColor DarkGray
+            Write-Log "[bootstrap] Created output directory: $outDir"
         }
         break
     }
@@ -45,10 +49,10 @@ function Find-SystemNode {
     if ($systemNode) {
         $major = Get-NodeMajor $systemNode.Source
         if ($major -ge $RequiredMajor) {
-            Write-Host "[bootstrap] Using system Node.js ($($systemNode.Source), v$major)" -ForegroundColor Green
+            Write-Log "[bootstrap] Using system Node.js ($($systemNode.Source), v$major)"
             return $systemNode.Source
         }
-        Write-Host "[bootstrap] System Node.js too old (v$major, need >=$RequiredMajor)" -ForegroundColor Yellow
+        Write-Log "[bootstrap] System Node.js too old (v$major, need >=$RequiredMajor)"
     }
     return $null
 }
@@ -57,10 +61,10 @@ function Install-PortableNode {
     if (Test-Path $NodeExe) {
         $major = Get-NodeMajor $NodeExe
         if ($major -ge $RequiredMajor) {
-            Write-Host "[bootstrap] Using portable Node.js (.node/node.exe, v$major)" -ForegroundColor Green
+            Write-Log "[bootstrap] Using portable Node.js (.node/node.exe, v$major)"
             return $NodeExe
         }
-        Write-Host "[bootstrap] Portable Node.js too old (v$major), re-downloading..." -ForegroundColor Yellow
+        Write-Log "[bootstrap] Portable Node.js too old (v$major), re-downloading..."
     }
 
     $arch = if ([Environment]::Is64BitOperatingSystem) { 'x64' } else { 'x86' }
@@ -69,20 +73,20 @@ function Install-PortableNode {
     $zipPath = Join-Path $env:TEMP $zipName
     $extractDir = Join-Path $env:TEMP "node-$NodeVersion-win-$arch"
 
-    Write-Host "[bootstrap] Downloading Node.js $NodeVersion ($arch)..." -ForegroundColor Cyan
-    Write-Host "            $url" -ForegroundColor DarkGray
+    Write-Log "[bootstrap] Downloading Node.js $NodeVersion ($arch)..."
+    Write-Log "            $url"
 
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
     } catch {
-        Write-Host "[bootstrap] ERROR: Failed to download Node.js: $_" -ForegroundColor Red
-        Write-Host "            Install Node.js 18+ manually: https://nodejs.org" -ForegroundColor Yellow
+        Write-Log "[bootstrap] ERROR: Failed to download Node.js: $_"
+        Write-Log "            Install Node.js 18+ manually: https://nodejs.org"
         exit 3
     }
 
-    Write-Host "[bootstrap] Extracting..." -ForegroundColor Cyan
+    Write-Log "[bootstrap] Extracting..."
     if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
     Expand-Archive -Path $zipPath -DestinationPath $env:TEMP -Force
 
@@ -94,15 +98,15 @@ function Install-PortableNode {
     Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
 
     $major = Get-NodeMajor $NodeExe
-    Write-Host "[bootstrap] Node.js $NodeVersion installed to .node/node.exe" -ForegroundColor Green
+    Write-Log "[bootstrap] Node.js $NodeVersion installed to .node/node.exe"
     return $NodeExe
 }
 
 # --- Main ---
-Write-Host ""
-Write-Host "  HiveGuard Bootstrap (Windows)" -ForegroundColor Cyan
-Write-Host "  =============================" -ForegroundColor DarkGray
-Write-Host ""
+Write-Log ""
+Write-Log "  HiveGuard Bootstrap (Windows)"
+Write-Log "  ============================="
+Write-Log ""
 
 # 1. Try system node
 $node = Find-SystemNode
@@ -113,8 +117,8 @@ if (-not $node) {
 }
 
 # 3. Run HiveGuard
-Write-Host "[bootstrap] Starting HiveGuard scan..." -ForegroundColor Cyan
-Write-Host ""
+Write-Log "[bootstrap] Starting HiveGuard scan..."
+Write-Log ""
 
 & $node $HiveGuardJs @HiveGuardArgs
 exit $LASTEXITCODE

@@ -114,7 +114,7 @@ function parseMetadata(raw) {
     else if (line.startsWith('Summary: ')) pkg.summary = line.slice(9).trim();
     else if (line.startsWith('License: ')) pkg.license = line.slice(9).trim();
     else if (line.startsWith('Author: ')) pkg.author = line.slice(8).trim();
-    if (pkg.name && pkg.version) break; // Early exit for speed
+    if (line === '' || line === '\r') break; // Headers end at blank line
   }
   return pkg;
 }

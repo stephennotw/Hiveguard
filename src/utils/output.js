@@ -20,8 +20,11 @@ function writeJson(filePath, data) {
   }
 }
 
+// Resolves once the data is flushed; pipes are async, so exiting earlier truncates output.
 function writeStdout(data) {
-  process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  return new Promise((resolve) => {
+    process.stdout.write(JSON.stringify(data, null, 2) + '\n', () => resolve());
+  });
 }
 
 function writeHtml(filePath, htmlContent) {

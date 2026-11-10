@@ -1,0 +1,65 @@
+{
+    "_meta": {
+        "hash": {
+            "sha256": "514fcc8439f029c1e599039c8de2b614b189bcd950cdc8a14887499b4a1fbc91"
+        },
+        "pipfile-spec": 6,
+        "requires": {
+            "python_version": "3.11"
+        },
+        "sources": [
+            {
+                "name": "pypi",
+                "url": "https://pypi.org/simple",
+                "verify_ssl": true
+            }
+        ]
+    },
+    "default": {
+        "certifi": {
+            "hashes": [
+                "sha256:0000"
+            ],
+            "markers": "python_version >= '3.7'",
+            "version": "==2026.10.23"
+        },
+        "charset-normalizer": {
+            "hashes": [
+                "sha256:0000"
+            ],
+            "markers": "python_version >= '3.7'",
+            "version": "==3.5.2"
+        },
+        "idna": {
+            "hashes": [
+                "sha256:0000"
+            ],
+            "markers": "python_version >= '3.9'",
+            "version": "==3.20"
+        },
+        "requests": {
+            "hashes": [
+                "sha256:0000"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '3.7'",
+            "version": "==2.31.0"
+        },
+        "six": {
+            "hashes": [
+                "sha256:0000"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '2.7' and python_version != '3.0' and python_version != '3.1' and python_version != '3.2'",
+            "version": "==1.16.0"
+        },
+        "urllib3": {
+            "hashes": [
+                "sha256:0000"
+            ],
+            "markers": "python_version >= '3.10'",
+            "version": "==2.8.0"
+        }
+    },
+    "develop": {}
+}

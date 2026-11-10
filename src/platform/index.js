@@ -10,8 +10,11 @@ const logger = require('../utils/logger');
  * Detect and return the platform-specific config.
  * Enumerates all user profiles so scans work even when running as SYSTEM.
  * Supports custom scan directories via CLI --scan-dirs flag.
+ * opts.usersRoot: enumerate profiles under this directory instead of the OS default
+ * (/home, /Users, C:\Users) and drop every path outside it (system-wide locations).
  */
-function getPlatform(customScanDirs) {
+function getPlatform(customScanDirs, opts = {}) {
+  const usersRoot = opts.usersRoot ? path.resolve(opts.usersRoot) : null;
   const platformId = os.platform();
   let getConfig;
 
@@ -32,12 +35,19 @@ function getPlatform(customScanDirs) {
   }
 
   // Enumerate all real user home directories
-  const userHomes = enumerateUserHomes(platformId);
+  const userHomes = enumerateUserHomes(platformId, usersRoot);
+  if (usersRoot && userHomes.length === 0) {
+    throw new Error(`No user profiles found under --users-root ${usersRoot}`);
+  }
   logger.info('platform', `Discovered ${userHomes.length} user profile(s): ${userHomes.map(h => path.basename(h)).join(', ')}`);
 
   // Generate config for each user home and merge them
   const configs = userHomes.map(home => getConfig(home));
   let config = mergeConfigs(configs);
+  if (usersRoot) {
+    config = restrictToRoot(config, usersRoot);
+    config.usersRoot = usersRoot;
+  }
 
   // Expose discovered user homes for username extraction in findings
   config.userHomes = userHomes;
@@ -65,7 +75,7 @@ function getPlatform(customScanDirs) {
  * Enumerate all real user home directories on the system.
  * Filters out system/service accounts.
  */
-function enumerateUserHomes(platformId) {
+function enumerateUserHomes(platformId, usersRoot) {
   const homes = [];
   const skipNames = new Set([
     'default', 'default user', 'defaultuser0', 'public', 'all users',
@@ -75,7 +85,9 @@ function enumerateUserHomes(platformId) {
   ]);
 
   let usersBase;
-  if (platformId === 'win32') {
+  if (usersRoot) {
+    usersBase = usersRoot;
+  } else if (platformId === 'win32') {
     usersBase = process.env.SystemDrive ? path.join(process.env.SystemDrive, 'Users') : 'C:\\Users';
   } else if (platformId === 'darwin') {
     usersBase = '/Users';
@@ -84,7 +96,7 @@ function enumerateUserHomes(platformId) {
   }
 
   try {
-    if (!fs.existsSync(usersBase)) return [os.homedir()];
+    if (!fs.existsSync(usersBase)) return usersRoot ? [] : [os.homedir()];
     const entries = fs.readdirSync(usersBase, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
@@ -98,7 +110,7 @@ function enumerateUserHomes(platformId) {
   }
 
   // Fallback: always include current user's home if nothing found
-  if (homes.length === 0) {
+  if (homes.length === 0 && !usersRoot) {
     homes.push(os.homedir());
   }
 
@@ -147,6 +159,29 @@ function mergeConfigs(configs) {
   }
 
   return merged;
+}
+
+/**
+ * Keep only paths inside root: arrays and per-key arrays are filtered, other
+ * string values outside root are dropped.
+ */
+function restrictToRoot(config, root) {
+  const inside = (p) => {
+    const abs = path.resolve(p);
+    return abs === root || abs.startsWith(root + path.sep);
+  };
+  const out = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (key === 'id') out.id = value;
+    else if (Array.isArray(value)) out[key] = value.filter(v => typeof v !== 'string' || inside(v));
+    else if (value && typeof value === 'object') {
+      out[key] = {};
+      for (const [k, v] of Object.entries(value)) out[key][k] = (Array.isArray(v) ? v : [v]).filter(p => typeof p !== 'string' || inside(p));
+    } else if (typeof value === 'string') {
+      if (inside(value)) out[key] = value;
+    } else out[key] = value;
+  }
+  return out;
 }
 
 /**

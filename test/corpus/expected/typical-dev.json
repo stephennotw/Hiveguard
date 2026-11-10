@@ -1,0 +1,30 @@
+{
+  "machine": "typical-dev",
+  "description": "Ordinary developer laptop: popular packages with real-world install scripts, husky, a pnpm workspace with its lockfile, emoji and Hebrew in CLAUDE.md, user-level Claude hooks, ordinary Linux autostart entries. Nothing here should be flagged above medium.",
+  "known_gaps": [],
+  "exit_code": 0,
+  "counts": {
+    "components": 7,
+    "git_repos": 1,
+    "lifecycle_packages": 7
+  },
+  "threat_matches": [],
+  "findings": [
+    "medium suspicious_ai_instruction dana/projects/webapp/CLAUDE.md [pipe-to-shell]"
+  ],
+  "git_hooks": [
+    "info dana/projects/webapp/.husky/_/pre-commit (core.hooksPath (repo)) []"
+  ],
+  "mcp_servers": [],
+  "models": [],
+  "ai_credentials": [],
+  "ai_sdks": [],
+  "editors_discovered": [],
+  "ai_apps": [
+    "claude-code (dana) dana/.claude"
+  ],
+  "ai_files": [
+    "Claude Code: dana/.claude/settings.json hooks=1",
+    "Claude Code: dana/projects/webapp/CLAUDE.md"
+  ]
+}

@@ -93,8 +93,52 @@ function matchPackages(packages, threatIndex) {
   return matches;
 }
 
-function buildKey(ecosystem, packageName, version) {
-  return `${(ecosystem || '').toLowerCase()}:${(packageName || '').toLowerCase()}:${version || ''}`;
+function normalizeVersion(version) {
+  if (!version) return '';
+  return version.replace(/^v/, '');
 }
 
-module.exports = { buildIndex, matchPackages };
+// True for an installed version like "1.2.3" or "v0.17.0-rc1"; false for specs like ">=1.0", "^2", "*", "".
+function isConcreteVersion(version) {
+  return typeof version === 'string' && /^v?\d[0-9A-Za-z.+_!-]*$/.test(version);
+}
+
+/**
+ * Merge additional source matches (OSV, GHSA) into target in place.
+ * Identity is the specific inventoried package (ecosystem, name, version, project, source),
+ * so the same name@version in two projects stays two entries. Threats already present
+ * (same catalog + campaign) are not duplicated.
+ */
+function mergeThreatMatches(target, extra) {
+  const keyOf = (m) => [
+    (m.ecosystem || '').toLowerCase(), (m.name || '').toLowerCase(), normalizeVersion(m.version),
+    m.project || '', m.source || '',
+  ].join('\0');
+  const threatKey = (t) => `${t.catalog}\0${t.campaignName}`;
+
+  const index = new Map(target.map(m => [keyOf(m), m]));
+  for (const m of (extra || [])) {
+    const existing = index.get(keyOf(m));
+    if (!existing) {
+      target.push(m);
+      index.set(keyOf(m), m);
+      continue;
+    }
+    const have = new Set(existing.threats.map(threatKey));
+    for (const t of m.threats) {
+      if (!have.has(threatKey(t))) {
+        existing.threats.push(t);
+        have.add(threatKey(t));
+      }
+    }
+  }
+  return target;
+}
+
+function buildKey(ecosystem, packageName, version) {
+  // Some published catalogs write scoped names with a doubled '@' ("@@antv/x").
+  const name = (packageName || '').toLowerCase().replace(/^@@+/, '@');
+  return `${(ecosystem || '').toLowerCase()}:${name}:${normalizeVersion(version)}`;
+}
+
+module.exports = { buildIndex, matchPackages, mergeThreatMatches, isConcreteVersion, normalizeVersion };

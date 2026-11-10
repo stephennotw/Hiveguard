@@ -6,32 +6,35 @@
 
 set -euo pipefail
 
-# --- Logging: write a debug log file for Tanium/remote troubleshooting ---
-SCRIPT_DIR_EARLY="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
-BOOTSTRAP_LOG="$SCRIPT_DIR_EARLY/hiveguard-bootstrap.log"
+# Output directory (same default as hiveguard.js); the bootstrap log lives there
+# so the scanner never writes outside its own output dir.
+OUTPUT_DIR="./hiveguard-results"
+PREV_ARG=""
+for arg in "$@"; do
+    if [ "$PREV_ARG" = "--output" ] || [ "$PREV_ARG" = "-o" ]; then
+        OUTPUT_DIR="$arg"
+        break
+    fi
+    PREV_ARG="$arg"
+done
+if ! mkdir -p "$OUTPUT_DIR" 2>/dev/null; then
+    echo "[bootstrap] FATAL: cannot create output directory: $OUTPUT_DIR" >&2
+    exit 3
+fi
+BOOTSTRAP_LOG="$OUTPUT_DIR/hiveguard-bootstrap.log"
 
-log() { echo "$1"; echo "$1" >> "$BOOTSTRAP_LOG"; }
+# --- Logging: debug log file for Tanium/remote troubleshooting ---
+# stderr only: stdout is reserved for command substitution and --json output.
+log() { echo "$1" >&2; echo "$1" >> "$BOOTSTRAP_LOG" 2>/dev/null || true; }
 
-trap 'log "[bootstrap] FATAL: script failed at line $LINENO (exit code $?)"' ERR
+# Bootstrap failures exit 3 (fatal) so they are never mistaken for exit 1/2 (findings).
+trap 'rc=$?; log "[bootstrap] FATAL: script failed at line $LINENO (exit code $rc)"; exit 3' ERR
 
 log "[bootstrap] Started at $(date)"
 log "[bootstrap] PWD: $(pwd)"
 log "[bootstrap] Script: $0"
 log "[bootstrap] Args: $*"
 log "[bootstrap] OS: $(uname -a)"
-
-# Pre-create output directory if --output is specified
-PREV_ARG=""
-for arg in "$@"; do
-    if [ "$PREV_ARG" = "--output" ]; then
-        if [ ! -d "$arg" ]; then
-            mkdir -p "$arg"
-            echo "[bootstrap] Created output directory: $arg" >&2
-        fi
-        break
-    fi
-    PREV_ARG="$arg"
-done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -260,7 +263,8 @@ log "[bootstrap] HIVEGUARD_JS=$HIVEGUARD_JS"
 log "[bootstrap] Starting HiveGuard scan..."
 log ""
 
-"$NODE_EXE" "$HIVEGUARD_JS" "$@"
-EXIT_CODE=$?
+# Exit codes 1/2 mean findings, not failure — keep set -e / the ERR trap out of it
+EXIT_CODE=0
+"$NODE_EXE" "$HIVEGUARD_JS" "$@" || EXIT_CODE=$?
 log "[bootstrap] HiveGuard exited with code $EXIT_CODE"
 exit $EXIT_CODE

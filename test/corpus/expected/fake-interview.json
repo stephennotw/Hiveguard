@@ -1,0 +1,35 @@
+{
+  "machine": "fake-interview",
+  "description": "Windows-style profile: work repo in OneDrive with a backdoored git hook, and a take-home assignment in Downloads that executes on npm install, on folder open in VS Code, and on Claude Code session start, plus a rules file with tag-character smuggling.",
+  "known_gaps": [
+    "By design, files in cloud-synced folders (OneDrive here) are listed but never read, so the backdoored post-checkout hook in the OneDrive repo is reported as info only."
+  ],
+  "exit_code": 1,
+  "counts": {
+    "components": 0,
+    "git_repos": 2,
+    "lifecycle_packages": 0
+  },
+  "threat_matches": [],
+  "findings": [
+    "high suspicious_ai_instruction sam/Downloads/take-home-assignment/.claude/settings.json [ip-address-url,project-agent-hooks,token-env-harvest]",
+    "high suspicious_ai_instruction sam/Downloads/take-home-assignment/.cursor/rules/style.mdc [hidden-unicode]",
+    "high suspicious_ai_instruction sam/Downloads/take-home-assignment/.vscode/tasks.json [autorun-on-folder-open,ip-address-url,token-env-harvest]",
+    "high suspicious_lifecycle_script sam/Downloads/take-home-assignment [ip-address-url,token-env-harvest]"
+  ],
+  "git_hooks": [
+    "info sam/OneDrive - Contoso/Documents/GitHub/payments/.git/hooks/post-checkout (.git/hooks) [] not-read"
+  ],
+  "mcp_servers": [],
+  "models": [],
+  "ai_credentials": [],
+  "ai_sdks": [],
+  "editors_discovered": [],
+  "ai_apps": [],
+  "ai_files": [
+    "Agents (AGENTS.md): sam/OneDrive - Contoso/Documents/GitHub/payments/AGENTS.md not-read",
+    "Claude Code: sam/Downloads/take-home-assignment/.claude/settings.json hooks=1",
+    "Cursor: sam/Downloads/take-home-assignment/.cursor/rules/style.mdc",
+    "VS Code: sam/Downloads/take-home-assignment/.vscode/tasks.json autorun=1"
+  ]
+}

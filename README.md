@@ -1,283 +1,185 @@
-# 🐝 HiveGuard
+# 🐝 HiveGuard 2.0
 
-**Cross-platform endpoint supply chain scanner with live threat intelligence.**
+**Find compromised packages, malicious install scripts, persistence and risky AI tooling on developer machines, without installing anything.**
 
-HiveGuard inventories every software component on a developer endpoint — npm, PyPI, Go, Composer, RubyGems, Cargo, IDE extensions, browser extensions, MCP server configs — and matches them against known supply chain compromise catalogs in real time.
+HiveGuard is a read-only scanner for Windows, macOS and Linux endpoints. It builds an inventory of what is on a machine (packages, extensions, AI tools, programs that start on login), checks it against live threat intelligence, and writes a JSON result plus an HTML report you can open in any browser.
 
-## Features
+> **New in 2.0:** more lockfile formats, persistence and IOC detection, AI tooling found by structure, GlassWorm and Phantom Gyp detection, SARIF / CycloneDX / NDJSON output, and `--ioc` search for incident response. See **[What's new in 2.0](docs/WHATS-NEW-2.0.md)**.
 
-- **Zero dependencies** — Pure Node.js 18+, no `npm install` required
-- **Cross-platform** — Windows, macOS, Linux with OS-specific path detection
-- **11 scanners** — npm, PyPI, Go, Composer, RubyGems, Cargo, editor extensions, browser extensions, MCP configs, npm globals, secrets hygiene
-- **Live threat intel** — Fetches exposure catalogs from [Bumblebee](https://github.com/perplexityai/bumblebee) into memory at runtime, with bundled baseline fallback
-- **Custom threat intel** — Add org-specific catalogs via `--custom-intel` or `~/.hiveguard/custom-catalogs/`
-- **Known CVE checks** — Static rules for 20+ common vulnerabilities (express, lodash, axios, pip, setuptools, etc.)
-- **Secrets hygiene** — Detects `.env` files with secrets, plaintext git credentials, SSH key audit
-- **Interactive HTML report** — Searchable, filterable, with threat alert banners and package detail modals
-- **Machine-readable output** — JSON for Tanium/Jamf/SIEM collection
-- **Read-only** — Never executes package managers, never modifies files
+---
 
-## Installation
+## Contents
+
+- [Quick start](#quick-start)
+- [What HiveGuard checks](#what-hiveguard-checks)
+- [Reading the result](#reading-the-result)
+- [Common tasks](#common-tasks)
+- [Options](#options)
+- [Safety on corporate machines](#safety-on-corporate-machines)
+- [Documentation](#documentation)
+
+---
+
+## Quick start
+
+You do not need to install anything. If Node.js 18 or newer is missing, the launcher downloads a portable copy into the HiveGuard folder.
+
+**1. Get HiveGuard**
 
 ```bash
-# Clone the repo (or copy the folder to the target machine)
 git clone https://github.com/stephennotw/Hiveguard.git
-cd hiveguard
+cd Hiveguard
 ```
 
-That's it — no `npm install`, no dependencies. The bootstrap wrappers handle everything, including downloading Node.js if needed.
+(Or copy/unzip the folder onto the machine.)
 
-## How to Run
+**2. Run it**
 
-HiveGuard ships with bootstrap wrappers that **automatically download a portable Node.js** if one isn't already installed. No admin/root required.
-
-### Windows — Command Prompt (CMD)
-
-Open `cmd.exe` and run:
-
-```cmd
-run.bat
-run.bat --offline --output C:\results --verbose
-run.bat --json > results.json
-```
-
-### Windows — PowerShell
-
-Open PowerShell and run:
-
-```powershell
-.\run.ps1
-.\run.ps1 --offline --output C:\results --verbose
-.\run.ps1 --json > results.json
-```
-
-> **Note**: If you see `execution of scripts is disabled`, either use `run.bat` instead or run:
-> `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Bypass`
-
-### macOS / Linux
-
-```bash
-chmod +x run.sh    # first time only
-./run.sh
-./run.sh --offline --output /tmp/results --verbose
-./run.sh --json > results.json
-```
-
-### Direct (if Node.js 18+ is already installed)
-
-If you already have Node.js 18+ on the system, you can skip the bootstrap wrappers entirely:
-
-```bash
-node bin/hiveguard.js
-node bin/hiveguard.js --output /path/to/results --verbose
-node bin/hiveguard.js --json --offline > results.json
-node bin/hiveguard.js --custom-intel /path/to/custom-catalogs
-node bin/hiveguard.js --scan-dirs /home/user/projects,/opt/apps
-```
-
-After a scan completes, open the generated HTML report in any browser to explore results interactively.
-
-### How the Bootstrap Works
-
-The `run.bat` / `run.ps1` (Windows) and `run.sh` (macOS/Linux) wrappers make HiveGuard truly zero-prerequisite:
-
-1. **Check system** — looks for an existing `node` binary with version >=18
-2. **Download if missing** — if Node.js isn't found (or is too old), downloads a portable Node.js binary from `nodejs.org` into a local `.node/` directory inside the repo. No system-level install, no admin/root, no PATH changes.
-3. **Cache for reuse** — the downloaded binary (~30MB) is kept in `.node/` so subsequent runs start instantly
-4. **Pass through** — all CLI flags are forwarded directly to `bin/hiveguard.js`
-
-The `.node/` directory is gitignored and never committed to the repo.
-
-| Wrapper | Shell | When to use |
-|---|---|---|
-| `run.bat` | CMD (Command Prompt) | Default for Windows — works everywhere, no execution policy issues |
-| `run.ps1` | PowerShell | If you prefer PowerShell or are running from a PS terminal |
-| `run.sh` | Bash / Zsh | macOS and Linux |
-
-## CLI Options
-
-| Flag | Description | Default |
-|---|---|---|
-| `--output <dir>` | Output directory for results | `./hiveguard-results` |
-| `--json` | JSON to stdout (quiet mode) | off |
-| `--offline` | Use bundled baseline catalogs only | off |
-| `--scan-dirs <dirs>` | Comma-separated scan roots | auto-detect |
-| `--custom-intel <dir>` | Dir(s) with custom threat intel JSON | none |
-| `--no-report` | Skip HTML report | off |
-| `--no-secrets` | Skip secrets hygiene scan | off |
-| `--max-depth <n>` | Max directory traversal depth | 6 |
-| `--verbose` / `-v` | Debug logging | off |
-
-## Exit Codes
-
-| Code | Meaning |
+| Platform | Command |
 |---|---|
-| `0` | Clean — no threats, no critical/high findings |
-| `1` | Findings — medium/high CVEs or advisories present |
-| `2` | Critical — supply chain compromise detected |
-| `3` | Fatal error |
+| Windows (Command Prompt) | `run.bat` |
+| Windows (PowerShell) | `.\run.ps1` |
+| macOS / Linux | `./run.sh` (run `chmod +x run.sh` the first time) |
+| Node.js 18+ already installed | `node bin/hiveguard.js` |
 
-## Endpoint Deployment
+**3. Open the report**
 
-HiveGuard is designed to be pushed to endpoints via any management tool (Tanium, Jamf, Intune, Ansible, etc.).
-No prerequisites required — the bootstrap wrappers download Node.js automatically if needed.
+When the scan finishes it prints where the results are (by default `./hiveguard-results/`). Open `hiveguard-report-<hostname>.html` in a browser.
 
-### Option A: ZIP Package (recommended for Tanium / remote deployment)
+A typical developer laptop takes from a few seconds up to a minute or two. HiveGuard runs at low CPU priority so it does not slow the machine down.
 
-1. **Prepare** — Zip the folder containing HiveGuard (e.g. `Hiveguard/`) into `Hiveguard.zip`
-2. **Upload** — Upload `Hiveguard.zip` as the package file
-3. **Command** — The package command extracts the ZIP, then runs the bootstrap:
-   - **Windows (CMD)**: `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && Hiveguard\run.bat --json`
-   - **Windows (PowerShell)**: `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && powershell Hiveguard\run.ps1 --json`
-   - **macOS/Linux (Tanium)**: `/bin/bash -c "unzip -qo Hiveguard.zip && cd Hiveguard && chmod +x run.sh && ./run.sh --json"`
-   - **macOS/Linux (shell)**: `unzip -qo Hiveguard.zip && chmod +x Hiveguard/run.sh && Hiveguard/run.sh --json`
+---
 
-> **Important:**
-> - The folder name inside the ZIP determines the path after `&&`. If your folder is named `Hiveguard`, the path is `Hiveguard\run.bat`.
-> - Results are written to `./hiveguard-results/` in the current directory by default. Use `--output <dir>` to change.
-> - **Do not** add `> results.json` to the command. The `--output` flag already writes all results (JSON + HTML) to the specified directory.
-> - **macOS note:** ZIPs created on Windows lose the execute permission on `run.sh`. The `chmod +x` step fixes this. If `unzip` is unavailable, use: `python3 -c "import zipfile; zipfile.ZipFile('Hiveguard.zip').extractall('.')" && chmod +x Hiveguard/run.sh && Hiveguard/run.sh --json`
-> - **Tanium macOS note:** Tanium passes the command to `/bin/bash` directly. You **must** use `/bin/bash -c "..."` to wrap the full command, otherwise `unzip` will fail with `cannot execute binary file` (exit code 126).
+## What HiveGuard checks
 
-### Option B: Direct Copy
+### Inventory and threat intelligence
 
-1. **Deploy** — Copy the entire `hiveguard/` directory to the endpoint
-2. **Run** — Execute the bootstrap wrapper:
-   - **Windows (CMD)**: `cmd /c C:\path\to\hiveguard\run.bat --json`
-   - **Windows (PowerShell)**: `powershell -ExecutionPolicy Bypass -File C:\path\to\hiveguard\run.ps1 --json`
-   - **macOS/Linux**: `/path/to/hiveguard/run.sh --json`
-
-### Collecting Results
-
-- **Collect** — Gather the JSON output from the `--output` directory on each endpoint
-- **Alert** — Use the exit code for automated alerting:
-  - `0` = clean
-  - `1` = findings present (review recommended)
-  - `2` = **critical** — supply chain compromise detected (escalate immediately)
-
-### Tanium 7.8 On-Prem Quick Reference
-
-| Step | Where | What |
+| Area | What is collected | From |
 |---|---|---|
-| Create package (Win) | Administration → Content → Packages → New Package | Upload `Hiveguard.zip` |
-| Set command (Win) | Package → Command field | `cmd /c powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path 'Hiveguard.zip' -DestinationPath '.' -Force" && Hiveguard\run.bat --json` |
-| Create package (Mac) | Administration → Content → Packages → New Package | Upload `Hiveguard.zip` |
-| Set command (Mac) | Package → Command field | `/bin/bash -c "unzip -qo Hiveguard.zip && cd Hiveguard && chmod +x run.sh && ./run.sh --json"` |
-| Set timeout | Package → Command Timeout | `600` seconds (extraction + possible Node.js download) |
-| Target endpoints | Interact → Ask question | `Get Computer Name from all machines` |
-| Deploy | Select endpoints → Deploy Action → choose package | Run once or schedule |
-| Collect results | Create sensor to read `hiveguard-results/*.json` in the action directory | Pull back via Interact |
+| **JavaScript** | Every dependency of every project | `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` (v1 and Berry), `bun.lock`, global npm |
+| **Python** | Installed and locked packages | virtual environments, `requirements.txt`, `poetry.lock`, `uv.lock`, `Pipfile.lock` |
+| **Go, PHP, Ruby, Rust** | Module, package, gem and crate versions | `go.sum`, `composer.lock`, `Gemfile.lock`, `Cargo.lock` |
+| **Editor extensions** | VS Code, Cursor, Windsurf, VSCodium and any other VS Code fork | extension folders |
+| **Browser extensions** | Chrome, Edge, Brave | browser profiles |
+| **MCP servers** | Servers configured for any AI agent, and the package each one runs | agent config files |
 
-No admin/root privileges required. Results are written to `./hiveguard-results/` in the current directory by default. If the endpoint already has Node.js 18+, the wrapper uses it directly. Otherwise it downloads a portable binary on first run (~30MB, cached for subsequent scans).
+Every component is checked against:
 
-## Output Structure
+- **Threat-intel catalogs** of known-compromised package versions (live from [Bumblebee](https://github.com/perplexityai/bumblebee), with a bundled offline copy, plus your own catalogs).
+- **OSV.dev** malicious-package advisories, including VS Code extensions.
+- **GitHub Advisory Database** malware advisories (when `GITHUB_TOKEN` is set).
+- **Known CVE rules** for about 20 widely used packages.
 
-```
-hiveguard-results/
-├── hiveguard-<hostname>-<timestamp>.json   # Full scan results
-└── hiveguard-report-<hostname>.html        # Interactive HTML report
-```
+### Code that runs automatically
 
-Note: Threat intel catalogs are loaded into memory at runtime — no disk cache required.
+| Check | Catches |
+|---|---|
+| **Install scripts** | `preinstall` / `install` / `postinstall` hooks and the files they run (Shai-Hulud style worms), `binding.gyp` commands (Phantom Gyp), dependencies downloaded from a URL outside any registry (PhantomRaven) |
+| **Git hooks** | Suspicious hooks in repositories and in a global `core.hooksPath` |
+| **AI assistant files** | Prompt injection, hidden Unicode, exfiltration instructions and permission bypasses in `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, rules/skills folders; agent hooks and VS Code tasks that run when a folder opens, and the scripts they run |
+| **Autostart and persistence** | macOS LaunchAgents, Linux autostart and systemd user units, the Windows Startup folder; Windows scheduled tasks and cron tables when run elevated |
+| **Extensions** | Code hidden as invisible Unicode in an extension (GlassWorm) |
+| **Indicators of compromise** | Payload file names, file hashes, persistence files and exfiltration hosts published in threat-intel catalogs |
 
-> **📖 For a complete guide to understanding results — findings, severity scoring, dependencies, field reference, and examples — see [`docs/RESULTS-GUIDE.md`](docs/RESULTS-GUIDE.md).**
+### AI on this machine
 
-## Scanners
+AI tools are found by **how they are laid out on disk**, not by a product list, so new tools show up without anyone updating HiveGuard:
 
-| Scanner | What it finds | Lockfile / Source |
+- MCP servers (configured, available-but-unused, disabled), with unpinned packages flagged
+- VS Code forks, agent skills and rules folders
+- Local models (GGUF, safetensors, ONNX, PyTorch, …) and which ones use the unsafe pickle format
+- AI provider API keys stored in plain text (only the provider and file are reported, never the key)
+- AI SDKs used in projects
+- Common AI desktop apps
+
+### Secrets hygiene
+
+`.env` files containing secrets, plain-text git credentials, weak or old SSH keys. Only file names and key names are reported, never values.
+
+---
+
+## Reading the result
+
+The console summary and the exit code tell you how urgent the result is:
+
+| Exit code | Meaning | What to do |
 |---|---|---|
-| **npm** | Project + global dependencies | `package-lock.json` |
-| **PyPI** | Venv packages, requirements.txt, global | `.dist-info/METADATA` |
-| **Go** | Module dependencies | `go.sum` / `go.mod` |
-| **Composer** | PHP dependencies | `composer.lock` |
-| **RubyGems** | Ruby dependencies | `Gemfile.lock` |
-| **Cargo** | Rust dependencies | `Cargo.lock` |
-| **Editor Extensions** | VS Code, Windsurf, Cursor, VSCodium | Extension `package.json` |
-| **Browser Extensions** | Chrome, Edge, Brave | Extension `manifest.json` |
-| **MCP Configs** | Claude, Cursor, Windsurf MCP servers | Config JSON files |
-| **Secrets Hygiene** | `.env` files, git creds, SSH keys | File detection + metadata |
+| `0` | Clean: no threat match, nothing critical or high | Nothing urgent |
+| `1` | At least one critical or high finding (for example a malicious install script, a vulnerable package, plain-text credentials) | Review the findings |
+| `2` | A known-compromised package is installed, or an indicator you searched for was found | Treat as an incident |
+| `3` | HiveGuard could not run | Check the console output |
 
-## Threat Intelligence
+In the HTML report, start with **Overview**, then **Findings**. Every finding names the file or project it came from and the user it belongs to.
 
-HiveGuard uses a **tiered fallback chain** to ensure threat intel is always available:
+For what each finding means and what to do about it, see the **[Results guide](docs/RESULTS-GUIDE.md)**.
 
-| Priority | Source | Description |
+---
+
+## Common tasks
+
+| I want to… | Command | Guide |
 |---|---|---|
-| **1st** | Live fetch | Catalogs fetched from [Bumblebee](https://github.com/perplexityai/bumblebee) GitHub into memory at runtime |
-| **2nd** | Bundled baseline | Snapshot of catalogs shipped inside HiveGuard (`data/baseline-catalogs/`) |
-| **3rd** | Custom catalogs | User-provided JSON files via `--custom-intel` or `~/.hiveguard/custom-catalogs/` |
+| Scan without any network access | `run.bat --offline` | [How-to](docs/HOW-TO.md#scan-without-network-access) |
+| Check whether an indicator is on this machine | `run.bat --ioc "@antv/a8@0.1.1,t.m-kosche.com"` | [How-to](docs/HOW-TO.md#hunt-for-indicators-of-compromise) |
+| Send results to a SIEM | `run.bat --format ndjson` | [How-to](docs/HOW-TO.md#send-results-to-a-siem) |
+| Produce an SBOM | `run.bat --format cyclonedx` | [How-to](docs/HOW-TO.md#produce-an-sbom) |
+| Load findings into a code-scanning dashboard | `run.bat --format sarif` | [How-to](docs/HOW-TO.md#load-findings-into-a-security-dashboard) |
+| Add our own list of bad packages | `run.bat --custom-intel C:\intel` | [Threat intel](docs/THREAT-INTEL.md#add-your-own-catalogs) |
+| Deploy with Tanium, Jamf, Intune, … | see guide | [Deployment](docs/DEPLOYMENT.md) |
+| Scan a mounted disk image | `./run.sh --users-root /mnt/image/Users` | [How-to](docs/HOW-TO.md#scan-a-mounted-disk-image) |
+| Try it and share a summary safely | `node tools/self-check.js` | [How-to](docs/HOW-TO.md#run-the-self-check) |
 
-Custom catalogs are **always additive** — they merge on top of live/baseline and win on conflict.
+(On macOS/Linux use `./run.sh` instead of `run.bat`.)
 
-The report and JSON output always indicate which source tier was used: `live`, `baseline`, `custom`, or `live+custom`.
+---
 
-### Custom Threat Intel Format
+## Options
 
-To add your own threat intel (e.g., internal SOC findings), create a JSON file:
+| Option | What it does | Default |
+|---|---|---|
+| `--output <dir>` | Where to write results | `./hiveguard-results` |
+| `--offline` | Use only the bundled threat intel; make no network requests | off |
+| `--json` | Also print the JSON result to standard output (quiet mode) | off |
+| `--format <list>` | Also write `sarif`, `cyclonedx`, `ndjson`, or `all` | none |
+| `--ioc <values>` | Look for indicators; comma-separated, can be repeated | none |
+| `--ioc-file <file>` | Indicators from a file, one per line | none |
+| `--custom-intel <dirs>` | Extra threat-intel catalog folders (comma-separated) | none |
+| `--scan-dirs <dirs>` | Scan only these folders for projects (comma-separated) | user profiles |
+| `--users-root <dir>` | Treat `<dir>` as the users folder and skip system locations | off |
+| `--max-depth <n>` | How deep to look for projects | `4` |
+| `--no-report` | Skip the HTML report | off |
+| `--no-secrets` | Skip the secrets hygiene checks | off |
+| `--normal-priority` | Run at normal instead of low CPU priority | off |
+| `--verbose`, `-v` | Detailed logging | off |
+| `--help`, `-h` | Show help | |
 
-```json
-{
-  "_comment": "Internal SOC findings — 2026-05-27",
-  "_indicators": {
-    "c2_domain": "bad.example.com",
-    "reference": "SOC-2026-0042"
-  },
-  "entries": [
-    {
-      "name": "Backdoored internal-utils",
-      "ecosystem": "npm",
-      "package": "internal-utils",
-      "source": "internal-soc",
-      "versions": ["1.0.0", "1.0.1"]
-    }
-  ]
-}
-```
+Network settings: `HTTPS_PROXY` / `NO_PROXY` are honoured. Set `GITHUB_TOKEN` to add the GitHub Advisory Database.
 
-Place it in either:
-- **`~/.hiveguard/custom-catalogs/`** — persistent per-machine
-- **Any directory** passed via `--custom-intel <dir>` — for Jamf/Tanium push
+---
 
-Supported ecosystems: `npm`, `pypi`, `go`, `composer`, `rubygems`, `cargo`, `vscode-extension`, `chrome-extension`.
+## Safety on corporate machines
 
-### Bundled Campaigns
+- **Read-only.** HiveGuard never runs package managers, scripts or anything it finds. It writes only to its output folder (and, if Node.js is missing, downloads it into its own `.node` folder).
+- **No registry reads.** Windows checks use files only.
+- **Gentle.** Below-normal CPU priority by default; file reads are capped in size.
+- **Cloud folders are not downloaded.** Files in OneDrive, Dropbox, Google Drive and iCloud folders are listed by name only, because opening an online-only file makes the OS download it.
+- **No secret values.** Secrets checks report file and key names, never values.
+- **Network use is limited to threat intel:** Bumblebee catalogs on GitHub, OSV.dev and (with a token) the GitHub Advisory Database. Only package names and versions are sent to OSV.dev and GitHub. `--offline` turns all of it off.
+- **Zero dependencies.** Pure Node.js; nothing is installed from npm.
 
-Current baseline includes: mini-shai-hulud, antv-mini-shai-hulud, trapdoor-crypto-stealer, node-ipc-credential-stealer, nx-console-vscode, gemstuffer, laravel-lang, shopsprint-decimal-typosquat.
+---
 
-## Architecture
+## Documentation
 
-```
-hiveguard/
-├── run.bat                  # Bootstrap wrapper (Windows CMD)
-├── run.ps1                  # Bootstrap wrapper (Windows PowerShell)
-├── run.sh                   # Bootstrap wrapper (macOS/Linux)
-├── bin/hiveguard.js          # CLI entry point + orchestrator
-├── src/
-│   ├── scanners/             # One module per ecosystem
-│   ├── platform/             # OS-specific paths (win32, darwin, linux)
-│   ├── threat-intel/         # Runtime fetch + matcher + baseline fallback
-│   ├── cve/                  # Static known-vulnerability rules
-│   ├── report/               # HTML report generator
-│   └── utils/                # Logger, FS helpers, output writers
-├── data/
-│   └── baseline-catalogs/    # Frozen threat intel snapshot (offline fallback)
-├── package.json
-├── LICENSE
-└── README.md
-```
-
-## Requirements
-
-- **None** — the bootstrap wrappers (`run.bat` / `run.ps1` / `run.sh`) download Node.js automatically if not present
-- **No npm install needed** — zero external dependencies
-- **Read-only filesystem access** — scans user home, project dirs, extension dirs without writing or executing anything
-- If running directly via `node bin/hiveguard.js`, Node.js 18+ is required (uses built-in `fs`, `https`, `path`, `os` only)
-
-## Security
-
-- **Read-only** — never writes outside the output directory, never executes package managers
-- **No secret values read** — secrets hygiene scanner detects file presence and key names only, never reads values
-- **No external calls** except optional GitHub API for live threat intel (skip with `--offline`)
+| Document | For |
+|---|---|
+| [What's new in 2.0](docs/WHATS-NEW-2.0.md) | Upgrading from 1.x: new features, changed behaviour, compatibility |
+| [How-to guides](docs/HOW-TO.md) | Step-by-step tasks: scanning, IOC hunting, exports, self-check, troubleshooting |
+| [Deployment](docs/DEPLOYMENT.md) | Running HiveGuard across a fleet (Tanium, Jamf, Intune, scripts) and collecting results |
+| [Results guide](docs/RESULTS-GUIDE.md) | Every finding type, what it means and what to do; JSON fields |
+| [Threat intelligence](docs/THREAT-INTEL.md) | Where intel comes from, custom catalogs, indicators |
+| [Development](docs/DEVELOPMENT.md) | Code layout, tests, the synthetic-machine corpus, CI |
+| [Changelog](CHANGELOG.md) | Version history |
 
 ## License
 

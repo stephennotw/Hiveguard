@@ -4,7 +4,10 @@
  * Generate a self-contained interactive HTML report from scan results.
  */
 function generateReport(result) {
-  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const isSafeUrl = (u) => /^https?:\/\//i.test(String(u || ''));
+  // JSON embedded in <script> must not contain "</script>" or raw U+2028/2029
+  const scriptJson = (v) => JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   const meta = result.meta;
   const ti = result.threat_intel;
   const summary = result.summary;
@@ -13,6 +16,9 @@ function generateReport(result) {
   const threatMatches = result.threat_matches || [];
   const catalogs = result.catalogs || [];
   const ecosystems = result.ecosystems || {};
+  const aiSignalCount = (ecosystems.mcp_configs?.total_servers || 0) + (ecosystems.ai_models?.total || 0)
+    + (ecosystems.ai_usage?.providers?.length || 0) + (ecosystems.ai_usage?.sdks?.length || 0);
+  const hygieneFlagged = (ecosystems.lifecycle_scripts?.total_findings || 0) + (ecosystems.git_hooks?.suspicious || 0) + (ecosystems.ai_instructions?.suspicious || 0) + (ecosystems.persistence?.findings || []).length;
 
   // Build searchable package array for client-side
   const searchPkgs = packages.map((p, i) => ({
@@ -136,6 +142,8 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
     <div class="nav-item" onclick="showPanel('go')">🔷 Go<span class="badge">${summary.ecosystems.go_projects} projects</span></div>
     <div class="nav-item" onclick="showPanel('extensions')">🔌 Extensions<span class="badge">${summary.ecosystems.editor_extensions + summary.ecosystems.browser_extensions}</span></div>
     <div class="nav-item" onclick="showPanel('mcp')">🔗 MCP<span class="badge">${summary.ecosystems.mcp_servers}</span></div>
+    <div class="nav-item" onclick="showPanel('ai')">🤖 AI on this machine<span class="badge">${aiSignalCount}</span></div>
+    <div class="nav-item" onclick="showPanel('hygiene')">🪝 Scripts, Hooks &amp; AI<span class="badge${hygieneFlagged > 0 ? ' critical' : ''}">${hygieneFlagged}</span></div>
   </div></div>`;
 
   html += `<div class="main">`;
@@ -165,7 +173,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
     }
     for (const [, info] of Object.entries(byAttack)) {
       html += `<div class="alert-match"><div class="attack-name">🎯 ${esc(info.attack)}</div>
-        <div class="attack-meta">Catalog: ${esc(info.catalog)}${info.source ? ` · <a href="${esc(info.source)}" target="_blank" style="color:var(--blue)">Source →</a>` : ''}</div>`;
+        <div class="attack-meta">Catalog: ${esc(info.catalog)}${isSafeUrl(info.source) ? ` · <a href="${esc(info.source)}" target="_blank" rel="noopener noreferrer" style="color:var(--blue)">Source →</a>` : info.source ? ` · Source: ${esc(info.source)}` : ''}</div>`;
       for (const p of info.pkgs) {
         html += `<div class="pkg-name" style="margin-top:.3rem">📦 ${esc(p.name)}@${esc(p.version)} <span style="font-size:.75rem;color:var(--text-dim);font-weight:400">in ${esc(p.project)} (${esc(p.ecosystem)})</span></div>`;
       }
@@ -255,6 +263,14 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<div class="panel" id="panel-threats">
   <h2 style="color:#fff;margin-bottom:.5rem">🛡️ Threat Intelligence</h2>
   <p style="color:var(--text-dim);font-size:.82rem;margin-bottom:1.5rem">${ti.catalogs_loaded} catalogs, ${ti.total_known_bad_versions} known-compromised versions indexed.</p>`;
+  const sourceRows = Object.entries(ti.sources || {});
+  if (sourceRows.length > 0) {
+    const labels = { bumblebee: 'Bumblebee live feed', osv: 'OSV.dev (OpenSSF)', ghsa: 'GitHub Advisory DB' };
+    html += `<p style="font-size:.78rem;margin:-1rem 0 1.5rem">${sourceRows.map(([k, v]) => {
+      const bad = v.status === 'failed' || v.status === 'partial';
+      return `<span style="color:${bad ? 'var(--critical)' : 'var(--text-dim)'}">${esc(labels[k] || k)}: ${esc(v.status)}${v.error ? ` (${esc(v.error)})` : ''}</span>`;
+    }).join(' · ')}</p>`;
+  }
 
   if (threatMatches.length > 0) {
     html += `<div style="background:var(--critical-bg);border:1px solid rgba(255,71,87,.3);border-radius:12px;padding:1.25rem;margin-bottom:1.5rem">
@@ -278,6 +294,13 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   // ── FINDINGS PANEL ──
   html += `<div class="panel" id="panel-findings">
   <h2 style="color:#fff;margin-bottom:1rem">⚠️ Findings</h2>`;
+  if ((result.ioc_search || []).length > 0) {
+    html += `<div class="card"><div class="card-header"><h3>🔎 Indicator search</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${result.ioc_search.filter(r => r.found).length} of ${result.ioc_search.length} found</span></div><div class="card-body"><table><thead><tr><th>Indicator</th><th>Kind</th><th>Result</th></tr></thead><tbody>`;
+    for (const r of result.ioc_search) {
+      html += `<tr><td><code>${esc(r.ioc)}</code></td><td style="font-size:.72rem">${esc(r.kind)}</td><td style="font-size:.72rem">${r.found ? `<span class="sev sev-critical">found</span><div style="color:var(--text-dim);word-break:break-all">${r.locations.slice(0, 20).map(esc).join('<br>')}</div>` : r.error ? esc(r.error) : 'not found'}</td></tr>`;
+    }
+    html += `</tbody></table></div></div>`;
+  }
   for (const f of findings) {
     const borderColor = f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'red' : f.severity === 'medium' ? 'orange' : 'blue';
     const pkgLabel = f.package && f.package !== 'secrets-hygiene' && !f.package.startsWith('env_') && !f.package.startsWith('git_') && !f.package.startsWith('ssh_') ? `<strong>${esc(f.package)}${f.version ? '@' + esc(f.version) : ''}</strong> — ` : '';
@@ -294,7 +317,7 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
   html += `<div class="panel" id="panel-npm"><h2 style="color:#fff;margin-bottom:1rem">📦 npm</h2>`;
   for (const proj of (ecosystems.npm?.projects || [])) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-      <h3>${esc(proj.project)}${proj.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(proj.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${proj.total_dependencies} deps</span>
+      <h3>${esc(proj.project)}${proj.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(proj.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${proj.lockfile_type ? `${esc(proj.lockfile_type)} · ` : ''}${proj.total_dependencies} deps</span>
     </div><div class="card-body collapsed">
       <input type="text" style="width:100%;padding:.4rem .6rem;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:.8rem;margin-bottom:.5rem;outline:none" placeholder="Filter..." oninput="filterTable(this)">
       <table><thead><tr><th>Package</th><th>Version</th></tr></thead><tbody>`;
@@ -334,7 +357,13 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
       <h3>${esc(editor)}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${exts.length}</span>
     </div><div class="card-body"><table><thead><tr><th>Publisher</th><th>Extension</th><th>Version</th><th>User</th></tr></thead><tbody>`;
-    for (const e of exts) html += `<tr><td>${esc(e.publisher)}</td><td>${esc(e.displayName)}</td><td>${esc(e.version)}</td><td style="font-size:.72rem;color:var(--accent-light)">${esc(e.user || '')}</td></tr>`;
+    for (const e of exts) {
+      const notes = [];
+      if (e.hidden_unicode_run) notes.push(`<span class="sev sev-critical">hidden code</span> invisible-Unicode run of ${e.hidden_unicode_run}`);
+      if ((e.extension_pack || []).length) notes.push(`pack: ${e.extension_pack.map(esc).join(', ')}`);
+      if ((e.extension_dependencies || []).length) notes.push(`depends on: ${e.extension_dependencies.map(esc).join(', ')}`);
+      html += `<tr><td>${esc(e.publisher)}</td><td>${esc(e.displayName)}${notes.length ? `<div style="font-size:.65rem;color:var(--text-dim)">${notes.join('<br>')}</div>` : ''}</td><td>${esc(e.version)}</td><td style="font-size:.72rem;color:var(--accent-light)">${esc(e.user || '')}</td></tr>`;
+    }
     html += `</tbody></table></div></div>`;
   }
   for (const [browser, exts] of Object.entries(ecosystems.browser_extensions?.browsers || {})) {
@@ -351,19 +380,158 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
 
   // ── MCP PANEL ──
   html += `<div class="panel" id="panel-mcp"><h2 style="color:#fff;margin-bottom:1rem">🔗 MCP Configs</h2>`;
-  for (const cfg of (ecosystems.mcp_configs?.configs || [])) {
+  const allMcp = ecosystems.mcp_configs?.configs || [];
+  // Configured servers: one card per config file.
+  for (const cfg of allMcp.filter(c => c.state !== 'available')) {
     html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-      <h3>${esc(cfg.config_name)}${cfg.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(cfg.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${cfg.server_count} servers</span>
+      <h3>${esc(cfg.app || cfg.config_name)}${cfg.user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(cfg.user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${cfg.server_count} servers</span>
     </div><div class="card-body">`;
     for (const srv of (cfg.servers || [])) {
-      html += `<div class="mcp-entry"><div class="name">${esc(srv.name)}</div>
-        <div class="meta">transport: ${esc(srv.transport)} | cmd: ${esc(srv.command || 'n/a')}</div>`;
+      html += `<div class="mcp-entry"><div class="name">${esc(srv.name)}${srv.disabled ? ' <span style="font-size:.7rem;color:var(--text-dim)">(disabled)</span>' : ''}</div>
+        <div class="meta">transport: ${esc(srv.transport)} | cmd: ${esc(srv.command || srv.url || 'n/a')}${srv.package ? ` | package: ${esc(srv.package)}@${esc(srv.package_version || 'unpinned')}` : ''}</div>`;
+      if (srv.unpinned && srv.active !== false) html += `<div class="env-warn">⚠ unpinned: runs whatever version of ${esc(srv.package)} was published last</div>`;
       if (srv.env_keys?.length > 0) html += `<div class="env-warn">⚠ env: ${srv.env_keys.map(esc).join(', ')}</div>`;
       html += `</div>`;
     }
     html += `</div></div>`;
   }
+  // Catalog entries (connector/plugin caches): one collapsed card per tool.
+  const mcpCatalogs = new Map();
+  for (const cfg of allMcp.filter(c => c.state === 'available')) {
+    const key = `${cfg.app || cfg.config_name}\u0000${cfg.user || ''}`;
+    if (!mcpCatalogs.has(key)) mcpCatalogs.set(key, { app: cfg.app || cfg.config_name, user: cfg.user, rows: [] });
+    for (const srv of (cfg.servers || [])) mcpCatalogs.get(key).rows.push({ srv, dir: cfg.relative_dir || '' });
+  }
+  for (const { app, user, rows } of mcpCatalogs.values()) {
+    html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+      <h3>${esc(app)} <span style="font-size:.7rem;color:var(--text-dim);font-weight:400">— catalog: available, not configured</span>${user ? ` <span style="font-size:.7rem;color:var(--accent-light);font-weight:400">[${esc(user)}]</span>` : ''}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${rows.length} available</span>
+    </div><div class="card-body collapsed"><table><thead><tr><th>Server</th><th>Would run</th><th>Catalog folder</th></tr></thead><tbody>`;
+    for (const { srv, dir } of rows) {
+      html += `<tr><td>${esc(srv.name)}</td><td style="font-size:.72rem">${srv.package ? `${esc(srv.package)}@${esc(srv.package_version || 'unpinned')}` : esc(srv.command || srv.url || '')}</td><td style="font-size:.7rem;color:var(--text-dim)">${esc(dir)}</td></tr>`;
+    }
+    html += `</tbody></table></div></div>`;
+  }
   html += `</div>`;
+
+  // ── AI ON THIS MACHINE PANEL ──
+  {
+    const fmtBytes = (n) => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${Math.round((n || 0) / 1048576)} MB`;
+    const card = (title, badge, body) => `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')"><h3>${title}</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${badge}</span></div><div class="card-body">${body}</div></div>`;
+    const empty = (t) => `<p style="color:var(--text-dim);font-size:.8rem">${t}</p>`;
+    const table = (head, rows) => `<table><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
+    const mcpCfgs = (ecosystems.mcp_configs?.configs || []).filter(c => c.servers.some(s => s.active !== false));
+    const mcpInactive = (ecosystems.mcp_configs?.available_servers || 0) + (ecosystems.mcp_configs?.disabled_servers || 0);
+    const models = ecosystems.ai_models || {};
+    const usage = ecosystems.ai_usage || {};
+    const editors = ecosystems.editor_extensions?.discovered_editors || [];
+    const compromised = new Set(threatMatches.map(m => `${String(m.ecosystem).toLowerCase()}:${m.name}@${m.version}`));
+
+    html += `<div class="panel" id="panel-ai"><h2 style="color:#fff;margin-bottom:.5rem">🤖 AI on this machine</h2>
+      <p style="color:var(--text-dim);font-size:.82rem;margin-bottom:1.5rem">Found by structure (MCP configs, model file formats, credential formats, SDKs), not by product name, so tools HiveGuard has never heard of still show up under their folder name.</p>`;
+
+    const knownApps = ecosystems.ai_apps?.apps || [];
+    html += card('📦 Known AI apps', `${new Set(knownApps.map(a => a.id)).size} apps`, knownApps.length === 0 ? empty('None of the AI apps on HiveGuard\'s short list were found (tools without a known footprint are still found by the signals below).')
+      : table(['App', 'Kind', 'User', 'Found at'], knownApps.map(a => `<tr><td>${esc(a.name)}</td><td>${esc(a.kind)}</td><td>${esc(a.user)}</td><td style="font-size:.7rem;word-break:break-all">${a.evidence.map(esc).join('<br>')}</td></tr>`)));
+
+    html += card('🔗 MCP servers', `${ecosystems.mcp_configs?.total_servers || 0} servers in ${mcpCfgs.length} configs`, mcpCfgs.length === 0 ? empty('No MCP servers configured.')
+      : table(['App', 'Server', 'Runs', 'Notes'], mcpCfgs.flatMap(c => c.servers.filter(s => s.active !== false).map(s => `<tr><td>${esc(c.app || c.config_name)}</td><td>${esc(s.name)}${s.project ? `<div style="font-size:.65rem;color:var(--text-dim)">${esc(s.project)}</div>` : ''}</td><td style="font-size:.72rem">${s.package ? `${esc(s.package)}@${esc(s.package_version || 'unpinned')}` : esc(s.command || s.url || '')}</td><td style="font-size:.7rem">${[compromised.has(`${s.package_ecosystem}:${s.package}@${s.package_version}`) ? '<span class="sev sev-critical">known malicious</span>' : '', s.unpinned ? '<span class="sev sev-medium">unpinned</span>' : '', s.has_credentials ? 'credentials in env' : '', s.wrapped_by ? `via ${esc(s.wrapped_by)}` : ''].filter(Boolean).join(' ') || '—'}</td></tr>`))));
+
+    if (mcpInactive > 0) html += `<p style="color:var(--text-dim);font-size:.75rem;margin:-.5rem 0 1rem">Not counted: ${ecosystems.mcp_configs.available_servers || 0} servers listed in catalogs/caches (available, not configured) and ${ecosystems.mcp_configs.disabled_servers || 0} disabled. All are listed in the MCP panel.</p>`;
+
+    html += card('🧠 Local models', `${models.total || 0} models, ${fmtBytes(models.total_size)}${models.pickle_count ? `, ${models.pickle_count} pickle-format` : ''}`, (models.models || []).length === 0 ? empty('No local model files found.')
+      : '<p style="color:var(--text-dim);font-size:.75rem;margin-bottom:.5rem">Pickle-format models (PyTorch .pt/.ckpt/.bin) can run code when loaded; prefer safetensors or GGUF from untrusted sources.</p>'
+        + table(['Store', 'Model', 'Format', 'Size'], models.models.map(m => `<tr><td>${esc(m.store || '—')}</td><td style="font-size:.72rem;word-break:break-all">${esc(m.name || m.path)}</td><td>${esc(m.format)}${m.pickle ? ' <span class="sev sev-low">pickle</span>' : ''}${m.content_not_read ? ' <span style="font-size:.65rem;color:var(--text-dim)">(cloud, not read)</span>' : ''}</td><td>${fmtBytes(m.size)}</td></tr>`)));
+
+    html += card('🔑 AI provider credentials', `${(usage.providers || []).length} found`, (usage.providers || []).length === 0 ? empty('No plaintext AI provider credentials found.')
+      : '<p style="color:var(--text-dim);font-size:.75rem;margin-bottom:.5rem">Key values are never read into the report; only where a key appears.</p>'
+        + table(['Provider', 'Where', 'Detected by', 'File'], usage.providers.map(p => `<tr><td>${esc(p.provider)}</td><td>${esc(p.source)}</td><td>${esc(p.variable || 'key format')}</td><td style="font-size:.72rem;word-break:break-all">${esc(p.path)}</td></tr>`)));
+
+    html += card('📚 AI SDKs in dependencies', `${(usage.sdks || []).length} SDKs`, (usage.sdks || []).length === 0 ? empty('No AI SDKs in the dependency inventory.')
+      : table(['Ecosystem', 'SDK', 'Versions', 'Projects'], usage.sdks.map(s => `<tr><td>${esc(s.ecosystem)}</td><td>${esc(s.name)}</td><td style="font-size:.72rem">${s.versions.map(esc).join(', ')}</td><td>${s.projects}</td></tr>`)));
+
+    html += card('🧩 Editors found by structure', `${editors.length}`, editors.length === 0 ? empty('No additional VS Code-family editors beyond the known ones.')
+      : `<p style="font-size:.8rem">${editors.map(esc).join(', ')} — their extensions are listed in the Extensions panel.</p>`);
+    html += `</div>`;
+  }
+
+  // ── SCRIPTS, HOOKS & AI PANEL ──
+  const sevTag = (sev) => `<span class="sev sev-${esc(sev)}">${esc(sev)}</span>`;
+  const codeCell = (t) => `<code style="font-size:.68rem;word-break:break-all;color:var(--text-dim)">${esc(t)}</code>`;
+  html += `<div class="panel" id="panel-hygiene"><h2 style="color:#fff;margin-bottom:.5rem">🪝 Install Scripts, Git Hooks, AI Files &amp; Autostart</h2>
+    <p style="color:var(--text-dim);font-size:.82rem;margin-bottom:1.5rem">Code that runs automatically: npm install hooks and binding.gyp commands, git hooks, instruction/config files read by AI coding assistants, and programs set to start on login. Excerpts are attacker-controlled text.</p>`;
+
+  const lc = ecosystems.lifecycle_scripts || {};
+  html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+    <h3>📜 npm install scripts</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${lc.total_findings || 0} flagged / ${lc.packages_scanned || 0} packages</span>
+  </div><div class="card-body">`;
+  if ((lc.findings || []).length === 0) html += `<p style="color:var(--text-dim);font-size:.8rem">No suspicious install scripts.</p>`;
+  else {
+    html += `<table><thead><tr><th>Severity</th><th>Package</th><th>Hook</th><th>Triggers</th><th>Script</th></tr></thead><tbody>`;
+    for (const f of lc.findings) {
+      html += `<tr><td>${sevTag(f.severity)}</td><td>${esc(f.package)}<div style="font-size:.65rem;color:var(--text-dim)">${esc(f.path)}</div></td><td>${esc(f.hook || (f.dependency ? (f.dependency === 'resolved' ? 'installed from URL' : `dependency ${f.dependency}`) : ''))}</td><td style="font-size:.7rem">${(f.triggers || []).map(esc).join(', ')}${(f.script_files || []).length ? `<div style="color:var(--text-dim)">via ${f.script_files.map(esc).join(', ')}</div>` : ''}</td><td>${codeCell(f.script || f.url || '')}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  html += `</div></div>`;
+
+  const gh = ecosystems.git_hooks || {};
+  html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+    <h3>🪝 Git hooks</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${gh.suspicious || 0} suspicious / ${gh.hooks_found || 0} hooks in ${gh.repos_scanned || 0} repos</span>
+  </div><div class="card-body">`;
+  if ((gh.findings || []).length === 0) html += `<p style="color:var(--text-dim);font-size:.8rem">No custom git hooks found.</p>`;
+  else {
+    html += `<table><thead><tr><th>Severity</th><th>Hook</th><th>Repository</th><th>Source</th><th>Triggers</th></tr></thead><tbody>`;
+    for (const f of gh.findings) {
+      html += `<tr><td>${sevTag(f.severity)}</td><td>${esc(f.hook)}</td><td style="font-size:.72rem">${esc(f.repo)}</td><td style="font-size:.72rem">${esc(f.origin || '')}</td><td style="font-size:.7rem">${(f.triggers || []).map(esc).join(', ') || '—'}${f.symlink_target ? `<div style="color:var(--text-dim)">→ ${esc(f.symlink_target)}</div>` : ''}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  html += `</div></div>`;
+
+  const ai = ecosystems.ai_instructions || {};
+  const aiFlags = new Map((ai.findings || []).map(f => [f.path, f]));
+  html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+    <h3>🤖 AI assistant files</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${ai.suspicious || 0} flagged / ${ai.files_found || 0} files</span>
+  </div><div class="card-body">`;
+  if ((ai.inventory || []).length === 0) html += `<p style="color:var(--text-dim);font-size:.8rem">No AI assistant instruction or config files found.</p>`;
+  else {
+    html += `<table><thead><tr><th>Severity</th><th>Tool</th><th>File</th><th>Details</th></tr></thead><tbody>`;
+    const sevRank = { critical: 0, high: 1, medium: 2, low: 3 };
+    const rows = [...ai.inventory].sort((a, b) => (sevRank[(aiFlags.get(a.path) || {}).severity] ?? 9) - (sevRank[(aiFlags.get(b.path) || {}).severity] ?? 9));
+    for (const item of rows) {
+      const f = aiFlags.get(item.path);
+      const details = [];
+      if (f) details.push((f.triggers || []).map(esc).join(', '));
+      for (const h of (item.hooks || [])) details.push(`hook ${esc(h.event)}: ${codeCell(h.command)}`);
+      for (const t of (item.autorun_tasks || [])) details.push(`runs on folder open: ${codeCell(t.command)}`);
+      if (item.symlink_target) details.push(`→ ${esc(item.symlink_target)}`);
+      html += `<tr><td>${f ? sevTag(f.severity) : '<span style="color:var(--text-dim);font-size:.7rem">—</span>'}</td><td>${esc(item.tool)}</td><td style="font-size:.72rem;word-break:break-all">${esc(item.path)}</td><td style="font-size:.7rem">${details.join('<br>') || '—'}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  html += `</div></div>`;
+
+  const ps = ecosystems.persistence || {};
+  const psFindings = ps.findings || [];
+  const psFlags = new Map(psFindings.filter(f => f.type === 'suspicious_autostart').map(f => [f.path, f]));
+  html += `<div class="card"><div class="card-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+    <h3>🚀 Autostart &amp; persistence</h3><span class="badge" style="background:var(--surface3);color:var(--text-dim)">${psFindings.length} flagged / ${ps.total || 0} entries</span>
+  </div><div class="card-body">`;
+  for (const f of psFindings.filter(x => x.type === 'known_ioc_file')) {
+    html += `<p style="font-size:.8rem">${sevTag(f.severity)} Known persistence file present: <code>${esc(f.path)}</code> <span style="color:var(--text-dim)">(${esc(f.ioc)})</span></p>`;
+  }
+  if ((ps.entries || []).length === 0) html += `<p style="color:var(--text-dim);font-size:.8rem">No autostart entries found (LaunchAgents, XDG autostart, systemd user units, Startup folder${(ps.unreadable || []).length ? '; scheduled tasks need an elevated scan' : ''}).</p>`;
+  else {
+    html += `<table><thead><tr><th>Severity</th><th>Kind</th><th>Entry</th><th>Command</th></tr></thead><tbody>`;
+    const rank = { critical: 0, high: 1, medium: 2, low: 3 };
+    const rows = [...ps.entries].sort((a, b) => (rank[(psFlags.get(a.path) || {}).severity] ?? 9) - (rank[(psFlags.get(b.path) || {}).severity] ?? 9));
+    for (const e of rows) {
+      const f = psFlags.get(e.path);
+      html += `<tr><td>${f ? sevTag(f.severity) : '<span style="color:var(--text-dim);font-size:.7rem">—</span>'}</td><td style="font-size:.72rem">${esc(e.kind)}</td><td style="font-size:.72rem;word-break:break-all">${esc(e.name)}${e.user ? ` <span style="color:var(--accent-light)">[${esc(e.user)}]</span>` : ''}${f ? `<div style="color:var(--text-dim)">${(f.triggers || []).map(esc).join(', ')}</div>` : ''}</td><td>${e.command ? codeCell(e.command) : '<span style="color:var(--text-dim);font-size:.7rem">not readable</span>'}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  html += `</div></div></div>`;
 
   // ── MODAL ──
   html += `<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal()">
@@ -372,14 +540,14 @@ tr.threat-row{background:var(--critical-bg)}tr.threat-row:hover{background:rgba(
 
   // Footer
   html += `<div style="text-align:center;color:var(--text-muted);font-size:.7rem;margin-top:2rem;padding:1rem">
-    HiveGuard v${meta.version || '1.0.0'} · ${esc(meta.scan_time)} · ${ti.catalogs_loaded} threat catalogs · Read-only scan
+    HiveGuard v${esc(meta.version || '')} · ${esc(meta.scan_time)} · ${ti.catalogs_loaded} threat catalogs · Read-only scan
   </div></div></div>`;
 
   // ── JAVASCRIPT ──
   html += `<script>
-const P=${JSON.stringify(searchPkgs)};
+const P=${scriptJson(searchPkgs)};
 let ecoF='all';
-function showPanel(n){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));const el=document.getElementById('panel-'+n);if(el)el.classList.add('active');document.querySelectorAll('.nav-item').forEach(i=>{const labels={overview:'📊',search:'🔍',threats:'🛡️',findings:'⚠️',npm:'📦',pypi:'🐍',go:'🔷',extensions:'🔌',mcp:'🔗'};if(i.textContent.includes(labels[n]))i.classList.add('active')})}
+function showPanel(n){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));const el=document.getElementById('panel-'+n);if(el)el.classList.add('active');document.querySelectorAll('.nav-item').forEach(i=>{const labels={overview:'📊',search:'🔍',threats:'🛡️',findings:'⚠️',npm:'📦',pypi:'🐍',go:'🔷',extensions:'🔌',mcp:'🔗',hygiene:'🪝',ai:'🤖'};if(i.textContent.includes(labels[n]))i.classList.add('active')})}
 function globalFilter(){const q=document.getElementById('globalSearch').value.toLowerCase();const rows=document.querySelectorAll('#searchTableBody tr');let c=0;rows.forEach(r=>{const s=r.dataset.s;const e=r.dataset.eco;const t=r.classList.contains('threat-row');let em=ecoF==='all'||e===ecoF||(ecoF==='threats'&&t);let tm=!q||s.includes(q);const show=em&&tm;r.style.display=show?'':'none';if(show)c++});document.getElementById('searchCount').textContent=c.toLocaleString()}
 function setEcoFilter(el,e){document.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));el.classList.add('active');ecoF=e;globalFilter()}
 function filterTable(input){const f=input.value.toLowerCase();const t=input.parentElement.querySelector('table');if(!t)return;t.querySelectorAll('tbody tr').forEach(r=>{r.style.display=r.textContent.toLowerCase().includes(f)?'':'none'})}
@@ -393,7 +561,7 @@ b+='<div class="label">Version</div><div class="value">'+esc(p.ver)+'</div>';
 if(p.user)b+='<div class="label">User</div><div class="value">'+esc(p.user)+'</div>';
 b+='<div class="label">Project</div><div class="value">'+esc(p.proj)+'</div>';
 b+='<div class="label">Source</div><div class="value">'+esc(p.src)+'</div>';
-if(p.res)b+='<div class="label">Resolved</div><div class="value"><a href="'+esc(p.res)+'" target="_blank">'+esc(p.res)+'</a></div>';
+if(p.res)b+='<div class="label">Resolved</div><div class="value">'+(/^https?:\\/\\//i.test(p.res)?'<a href="'+esc(p.res)+'" target="_blank" rel="noopener noreferrer">'+esc(p.res)+'</a>':esc(p.res))+'</div>';
 b+='<div class="label">Status</div><div class="value">'+(p.threat?'<span class="sev sev-critical">COMPROMISED</span>':'<span style="color:var(--green)">✅ Clean</span>')+'</div>';
 b+='</div>';
 const same=P.filter(x=>x.name===p.name&&x.id!==p.id);

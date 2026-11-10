@@ -161,8 +161,8 @@ function scanSshKeys(platform) {
       const stat = statSafe(filePath);
       if (!stat || !stat.isFile()) continue;
 
-      // Read only first line to detect key type
-      const raw = readFileSafe(filePath);
+      // Read only the first 128 bytes to detect key type from the header
+      const raw = readFileSafe(filePath, { maxBytes: 128 });
       if (!raw) continue;
 
       const firstLine = raw.split('\n')[0].trim();

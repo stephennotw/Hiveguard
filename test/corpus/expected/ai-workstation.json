@@ -1,0 +1,54 @@
+{
+  "machine": "ai-workstation",
+  "description": "Developer laptop full of AI tooling, found by structure: an unknown agent with MCP servers (one unpinned, one pinned to a known-malicious package), Codex TOML and ~/.claude.json project servers, an unknown VS Code fork, a custom agent skill, local GGUF / Hugging Face / Ollama models, provider keys in a shell profile and .env, AI SDK dependencies (npm and a uv-locked Python project), a GlassWorm-style extension and a legacy bun.lockb.",
+  "known_gaps": [
+    "Pickle-format models are inventoried and marked, but their contents are not inspected for dangerous imports."
+  ],
+  "exit_code": 2,
+  "counts": {
+    "components": 9,
+    "git_repos": 0,
+    "lifecycle_packages": 0
+  },
+  "threat_matches": [
+    "npm:node-ipc@9.2.3"
+  ],
+  "findings": [
+    "critical supply_chain_compromise npm:node-ipc@9.2.3 (node-ipc-credential-stealer.json)",
+    "critical suspicious_extension ari/.newfork/extensions/darkmode.glass-theme-0.9.1/extension.js [invisible-unicode-payload]",
+    "medium mcp_server_risk ari/.brandnew-agent/mcp.json [mcp-unpinned-package]"
+  ],
+  "git_hooks": [],
+  "mcp_servers": [
+    "[available] codex: calendar -> npm:calendar-mcp@unpinned",
+    "[disabled] codex: old -> npm:old-mcp@unpinned",
+    "brandnew-agent: files -> npm:files-mcp-server@unpinned",
+    "brandnew-agent: ipc -> npm:node-ipc@9.2.3",
+    "claude: db (/work/bot) -> https://db.example/mcp",
+    "codex: fetch -> pypi:mcp-server-fetch@2025.4.7"
+  ],
+  "models": [
+    "- ari/Downloads/qwen2.5-7b-instruct-q4_k_m.gguf [gguf]",
+    "huggingface acme/sentiment [pytorch-zip] pickle",
+    "ollama llama3.2:3b [gguf]"
+  ],
+  "ai_credentials": [
+    "anthropic shell-profile ANTHROPIC_API_KEY ari/.zshrc",
+    "openai env-file OPENAI_API_KEY ari/projects/bot/.env"
+  ],
+  "ai_sdks": [
+    "npm:@anthropic-ai/sdk 0.39.0 x1",
+    "npm:openai 4.77.0 x1",
+    "pypi:anthropic 0.40.0 x1"
+  ],
+  "editors_discovered": [
+    "newfork"
+  ],
+  "ai_apps": [
+    "codex (ari) ari/.codex",
+    "ollama (ari) ari/.ollama"
+  ],
+  "ai_files": [
+    "someagent: ari/.someagent/skills/release/SKILL.md skill_files=1"
+  ]
+}
