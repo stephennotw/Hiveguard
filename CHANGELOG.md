@@ -8,6 +8,7 @@
 - The `package.json` files that still need reading are read 8 at a time instead of one by one.
 - Editor-extension entry files (GlassWorm check) are read 4 at a time.
 - AI instruction files: a permission-bypass flag (`--dangerously-skip-permissions`, `--yolo`, `--trust-all-tools`) mentioned in the user's own files is medium instead of high; repository files stay high.
+- AI instruction files in a home folder that also looks like a project (a `package.json` or `.git` in `~`) are treated as the user's own files, not repository files; previously `~/.claude` skills and hooks there could be judged as if they came with a cloned repository.
 - Diagnostics say why a pnpm store was walked in full (`pnpm_record_fallbacks`, also shown by the self-check).
 
 ## 2.0.0 (2026-11-08)

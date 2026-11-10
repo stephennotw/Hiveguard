@@ -93,11 +93,16 @@ function scan(platform, opts = {}, projectDirs) {
   const ctx = { findings, inventory, seen, reportedLinks };
   // Most specific first so its label wins (files are deduplicated by identity):
   // user-level entries, project entries, then generic dot-folder discovery.
+  // A home folder that also looks like a project (a package.json or .git in ~) is still
+  // the user's own configuration, not something that arrived with a repository.
   const homes = platform.userHomes || [];
+  const key = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+  const homeKeys = new Set(homes.map(key));
+  const scopeOf = (dir) => (homeKeys.has(key(dir)) ? 'user' : 'project');
   for (const home of homes) for (const spec of USER_FILES) inspectSpec(spec, home, home, ctx, 'user');
-  for (const { dir, cloud } of dirs) for (const spec of PROJECT_FILES) inspectSpec(spec, dir, dir, ctx, 'project', !!cloud);
-  for (const { dir, cloud } of dirs) inspectGenericDotDirs(dir, ctx, 'project', !!cloud);
+  for (const { dir, cloud } of dirs) for (const spec of PROJECT_FILES) inspectSpec(spec, dir, dir, ctx, scopeOf(dir), !!cloud);
   for (const home of homes) inspectGenericDotDirs(home, ctx, 'user', false);
+  for (const { dir, cloud } of dirs) if (scopeOf(dir) === 'project') inspectGenericDotDirs(dir, ctx, 'project', !!cloud);
 
   const suspiciousCount = findings.filter(f => f.severity !== 'info').length;
   if (suspiciousCount > 0) {
